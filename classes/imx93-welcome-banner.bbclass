@@ -22,17 +22,19 @@
 # overridden per build (e.g. in local.conf) if someone other than the
 # default builder produces a given image.
 
-# Derived from bitbake.conf's DATE/TIME (both "${@time.strftime(...)}",
-# UTC), NOT a fresh time.strftime() call of our own. DATE/TIME live in
-# bitbake.conf, parsed once per bitbake server lifetime, so they're fixed
-# for the whole invocation. This class gets re-included on every parse of
-# any recipe that inherits it -- a fresh time.strftime() here would return
-# a different value on each of those reparses (seconds ticking over is
-# enough), and BitBake explicitly checks for exactly that kind of
-# metadata non-determinism before running a task, failing the build with
-# "the basehash value changed" if caught. Slicing the already-fixed
-# DATE/TIME strings keeps this deterministic across reparses.
-IMX93_BUILD_TIMESTAMP := "${@'%s-%s-%s %s:%s:%s UTC' % ('${DATE}'[0:4], '${DATE}'[4:6], '${DATE}'[6:8], '${TIME}'[0:2], '${TIME}'[2:4], '${TIME}'[4:6])}"
+# NOTE: no IMX93_BUILD_TIMESTAMP bitbake variable here. An earlier version
+# used one (first a raw "${@time.strftime(...)}", then a DATE/TIME-derived
+# variant) -- both still triggered BitBake's "basehash value changed / the
+# metadata is not deterministic" check, because ANY bitbake-level variable
+# whose value is computed at parse time via python is at risk of differing
+# between the two parses BitBake does of a recipe (once for the task
+# queue, once again right before running the task) -- this class gets
+# re-included on every one of those parses, unlike bitbake.conf itself
+# (parsed once per server lifetime). The robust fix: compute the timestamp
+# in plain shell (`$(date -u ...)`) *inside* the function body below,
+# executed only when the task actually runs. BitBake hashes the function's
+# static source text, not what running it produces, so a shell command
+# substitution can never trip this check -- see its two use sites below.
 IMX93_BUILDER ?= "Khaled El-Sayed"
 
 ROOTFS_POSTPROCESS_COMMAND += "imx93_write_welcome_banner "
@@ -46,6 +48,7 @@ imx93_write_welcome_banner () {
 	# the file as the literal two-character text "\n"/"\l" for agetty to
 	# substitute -- a heredoc can't easily do both at once.
 	issue="${IMAGE_ROOTFS}${sysconfdir}/issue"
+	build_timestamp="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 	: > "$issue"
 	printf '\033[1;36m********************************************************\033[0m\n' >> "$issue"
 	printf '\033[1;36m*\033[0m  \033[1;33m[IMX93-CUSTOM]\033[0m NXP i.MX93 FRDM Security Testing Image\n' >> "$issue"
@@ -53,7 +56,7 @@ imx93_write_welcome_banner () {
 	printf "\033[1;36m*\033[0m  Image      : \033[1;32m${PN}\033[0m\n" >> "$issue"
 	printf "\033[1;36m*\033[0m  Machine    : \033[1;32m${MACHINE}\033[0m\n" >> "$issue"
 	printf "\033[1;36m*\033[0m  Distro     : \033[1;32m${DISTRO} ${DISTRO_VERSION}\033[0m\n" >> "$issue"
-	printf "\033[1;36m*\033[0m  Built      : \033[1;32m${IMX93_BUILD_TIMESTAMP}\033[0m\n" >> "$issue"
+	printf "\033[1;36m*\033[0m  Built      : \033[1;32m${build_timestamp}\033[0m\n" >> "$issue"
 	printf "\033[1;36m*\033[0m  Builder    : \033[1;32m${IMX93_BUILDER}\033[0m\n" >> "$issue"
 	printf '\033[1;36m********************************************************\033[0m\n' >> "$issue"
 	printf '\n' >> "$issue"
@@ -66,7 +69,7 @@ imx93_write_welcome_banner () {
 IMX93_BI_IMAGE="${PN}"
 IMX93_BI_MACHINE="${MACHINE}"
 IMX93_BI_DISTRO="${DISTRO} ${DISTRO_VERSION}"
-IMX93_BI_BUILT="${IMX93_BUILD_TIMESTAMP}"
+IMX93_BI_BUILT="${build_timestamp}"
 IMX93_BI_BUILDER="${IMX93_BUILDER}"
 EOF
 
