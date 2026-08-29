@@ -238,6 +238,45 @@ on a machine where drive letters can shift between reboots.
 The one-time `/etc/exports` registration (`ln -sfn` + `exportfs -ra`) is
 printed, not run automatically, the first time the export is missing.
 
+### Welcome banner: `classes/imx93-welcome-banner.bbclass`
+
+Both image recipes (`imx-image-sec-full` picks it up automatically via its
+`require imx-image-sec-min.bb`) inherit this class, which writes a
+build-stamped banner to `/etc/issue` (shown on the serial console the
+moment boot reaches the login prompt — no login needed) and `/etc/motd`
+(shown again after logging in), in the same `********…********` box style
+used by this layer's U-Boot boot/flash banners:
+
+```
+********************************************************
+*  [IMX93-CUSTOM] NXP i.MX93 FRDM Security Testing Image
+********************************************************
+*  Image      : imx-image-sec-min
+*  Machine    : imx93frdm
+*  Distro     : fsl-imx-xwayland 6.6-scarthgap
+*  Built      : 2026-08-29 15:42:10
+*  Builder    : Ather
+********************************************************
+
+imx93frdm login:
+```
+
+`Image` (`${PN}`), `Machine`, and `Distro`/`Distro version` come straight
+from the recipe/build config, so `sec-min` vs `sec-full` and whatever
+`DISTRO`/`MACHINE` a given build used are always correct without manual
+upkeep. `Built` is a `time.strftime` snapshot taken when bitbake parses the
+class (i.e. this build's start time, same convention as the stock
+`DATE`/`TIME` bitbake variables). `Builder` defaults to `Ather`
+(`IMX93_BUILDER`, overridable per build — e.g. `IMX93_BUILDER = "someone
+else"` in `local.conf` — if someone else ever produces a build from this
+layer) so a given card/image can always be traced back to who built it and
+when, at a glance, before even logging in.
+
+The original `/etc/issue`'s `\n \l` escape line (agetty-substituted
+hostname/tty) is preserved at the bottom of the new banner, so the
+usual "log in on this tty as this host" info isn't lost — only the plain
+one-line NXP branding above it is replaced.
+
 ### Image recipes: `recipes-fsl/images/`
 
 Two custom images for hands-on security learning/testing on this board, both

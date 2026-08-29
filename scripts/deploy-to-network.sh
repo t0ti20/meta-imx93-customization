@@ -159,11 +159,9 @@ deploy_flash_boot() {
     if [[ "$dev_sectors" -gt 2048 ]]; then
         sudo dd if=/dev/zero of="$dev" bs=512 seek=$((dev_sectors - 2048)) count=2048 conv=fsync status=none
     fi
-    sync
 
     echo "==> Writing $IMX_BOOT to $dev at offset 32KiB"
     sudo dd if="$IMX_BOOT" of="$dev" bs=1K seek=32 conv=fsync status=progress
-    sync
     echo "Done -- $dev erased and imx-boot written."
 }
 

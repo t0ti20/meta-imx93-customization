@@ -5,7 +5,7 @@ DESCRIPTION = "Minimal headless security-testing image for i.MX93 FRDM: SSH, Pyt
 
 LICENSE = "MIT"
 
-inherit core-image
+inherit core-image imx93-welcome-banner
 
 IMAGE_LINGUAS = " "
 
