@@ -21,8 +21,12 @@
 # Env overrides (defaults match this host's actual tftpd-hpa/nfs-kernel-server
 # setup as of 2026-08-28):
 #   DEPLOY_DIR   tmp/deploy/images/imx93frdm to read build artifacts from
-#   TFTP_DIR     TFTP server root
+#   TFTP_DIR     TFTP server root (RPi4 artifacts are purged from here on deploy)
 #   NFS_DIR      real directory backing the NFS export for this board
+#
+# NOTE: bitbake imx-image-sec-min now runs TFTP deploy automatically after
+# every successful build (via the imx93-deploy-network bbclass).  Run this
+# script directly only for --nfs-only, --flash-boot, or out-of-band deploys.
 
 set -euo pipefail
 
@@ -73,9 +77,19 @@ deploy_tftp() {
     [[ -f "$KERNEL_IMAGE" ]] || { echo "ERROR: $KERNEL_IMAGE not found -- build $IMAGE_NAME first" >&2; exit 1; }
     [[ -f "$DTB" ]] || { echo "ERROR: $DTB not found -- build $IMAGE_NAME first" >&2; exit 1; }
 
-    echo "==> TFTP root ($TFTP_DIR) is shared with other boards, e.g. the"
-    echo "    RPi4 netboot setup, which also uses a generic 'Image' filename."
-    echo "    Kernel+dtb go under imx93/ to avoid clobbering that."
+    # Purge stale RPi4 artifacts -- RPi4 netboot is no longer served from this
+    # TFTP server.  The root-level Image was the RPi4 kernel; the imx93 kernel
+    # goes under imx93/Image, so the top-level one is always RPi-only.
+    echo "==> Purging stale RPi4 artifacts from $TFTP_DIR/"
+    if [[ -f "$TFTP_DIR/Image" ]]; then
+        echo "    rm Image  (RPi4 kernel -- imx93 kernel goes to imx93/Image)"
+        rm -f "$TFTP_DIR/Image"
+    fi
+    for f in "$TFTP_DIR"/bcm2711-*.dtb \
+              "$TFTP_DIR"/*.dtbo \
+              "$TFTP_DIR"/overlay_map.dtb; do
+        [[ -f "$f" ]] && { echo "    rm $(basename "$f")"; rm -f "$f"; }
+    done
 
     echo "==> $(basename "$WIC_GZ") -> $TFTP_DIR/ (for: run netflash)"
     install -m 0644 "$WIC_GZ" "$TFTP_DIR/"
