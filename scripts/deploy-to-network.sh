@@ -18,15 +18,21 @@
 #   deploy-to-network.sh [sec-min|sec-full] [--tftp-only|--nfs-only]
 #   deploy-to-network.sh --flash-boot /dev/sdX
 #
+# NFS extraction always restores real root:root ownership (sudo) -- the
+# rootfs has ~16 setuid/setgid binaries (su, passwd, busybox.suid, chage,
+# chfn, chsh, expiry, gpasswd, ...) that must stay root-owned to actually
+# grant root on the board.
+#
 # Env overrides (defaults match this host's actual tftpd-hpa/nfs-kernel-server
 # setup as of 2026-08-28):
 #   DEPLOY_DIR   tmp/deploy/images/imx93frdm to read build artifacts from
 #   TFTP_DIR     TFTP server root (RPi4 artifacts are purged from here on deploy)
 #   NFS_DIR      real directory backing the NFS export for this board
 #
-# NOTE: bitbake imx-image-sec-min now runs TFTP deploy automatically after
-# every successful build (via the imx93-deploy-network bbclass).  Run this
-# script directly only for --nfs-only, --flash-boot, or out-of-band deploys.
+# NOTE: bitbake imx-image-sec-min auto-deploys TFTP after every successful
+# build (via the imx93-deploy-network bbclass). NFS deploy is manual-only,
+# run from a normal shell (not from bitbake) so sudo works correctly --
+# BitBake's pseudo/fakeroot wrapper interferes with sudo's ownership checks.
 
 set -euo pipefail
 
@@ -48,7 +54,7 @@ while [[ $# -gt 0 ]]; do
             FLASH_BOOT_DEV="$1"
             ;;
         -h|--help)
-            sed -n '2,24p' "$0"
+            sed -n '2,37p' "$0"
             exit 0
             ;;
         *)
@@ -120,8 +126,10 @@ deploy_nfs() {
         echo "(mirrors the existing /exports/raspi4 entry)"
     fi
 
-    echo "==> Extracting $(basename "$ROOTFS_TAR") into $NFS_DIR (replaces its contents)"
-    sudo rm -rf "${NFS_DIR:?}"/*
+    echo "==> Extracting $(basename "$ROOTFS_TAR") into $NFS_DIR (replaces its contents, root:root ownership)"
+    # -mindepth 1 also catches dotfiles, which a plain rm -rf glob misses;
+    # keeping the directory itself avoids stale NFS filehandles on clients.
+    sudo find "$NFS_DIR" -mindepth 1 -delete
     sudo tar --numeric-owner -xpf "$ROOTFS_TAR" -C "$NFS_DIR"
 }
 
