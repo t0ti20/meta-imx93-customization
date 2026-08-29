@@ -147,24 +147,24 @@ intentionally not merged:
   reason, or by `bsp_bootcmd`'s own internal fallback if *both* the network
   and the SD card fail for `net_first_bootcmd`/`bsp_bootcmd` respectively.
 
-### Deploying to this host's TFTP/NFS servers: `scripts/deploy-to-network.sh`
+### Deploying to this host's TFTP/NFS servers
 
 This host already runs `tftpd-hpa` (root `/home/khaled/Documents/Network/TFTP`,
-shared with other boards' netboot setups, e.g. the RPi4) and
-`nfs-kernel-server` (existing export `/exports/raspi4`). The script copies a
-freshly built image's artifacts into both, for two independent, opt-in
-U-Boot workflows — nothing here touches `CONFIG_BOOTCOMMAND` or autoboot:
+shared with other boards' netboot setups, e.g. the RPi4 — this layer
+purges any stray RPi4 files from it, see below) and `nfs-kernel-server`
+(existing export `/exports/raspi4`). Deploy artifacts feed two independent,
+opt-in U-Boot workflows — nothing here touches `CONFIG_BOOTCOMMAND` or
+autoboot:
 
-- **`run netflash`** (flash): needs the `.wic.gz` in the TFTP root. The
-  script copies it there under its real name, matching this layer's baked-in
-  `netflash_gz_file` default with no `setenv` needed for `sec-min`.
+- **`run netflash`** (flash): needs the `.wic.gz` in the TFTP root, under its
+  real name, matching this layer's baked-in `netflash_gz_file` default with
+  no `setenv` needed for `sec-min`.
 - **`run netboot`** (live boot, no flashing — built into meta-imx-frdm's
   board support, `root=/dev/nfs`): needs the kernel `Image` + device tree
-  over TFTP, and the rootfs over NFS. The script copies `Image` and
-  `imx93-11x11-frdm.dtb` under `TFTP_DIR/imx93/` (**not** the TFTP root —
-  other boards' netboot setups already use the generic name `Image` there,
-  so a shared top-level copy would clobber theirs), and extracts the
-  image's `.tar.zst` rootfs into a dedicated NFS export directory
+  over TFTP, and the rootfs over NFS. Kernel/dtb go under `TFTP_DIR/imx93/`
+  (**not** the TFTP root — other boards' netboot setups already use the
+  generic name `Image` there, so a shared top-level copy would clobber
+  theirs); the rootfs is extracted into a dedicated NFS export directory
   (`/home/khaled/Documents/Network/NFS-IMX93` by default, exported as
   `/exports/imx93`, mirroring the existing `/exports/raspi4` pattern).
   Since `fdtfile`/`image` are shared U-Boot variables also used by the
@@ -181,18 +181,87 @@ U-Boot workflows — nothing here touches `CONFIG_BOOTCOMMAND` or autoboot:
   power cycle reloads the compiled-in defaults either way, so skipping
   `saveenv` keeps normal SD-card autoboot as the default.)
 
-**Usage**:
+#### Automatic, on every build: TFTP (`classes/imx93-deploy-network.bbclass`)
+
+Both image recipes inherit this class (`sec-full` picks it up via its
+`require imx-image-sec-min.bb`). It adds a `do_deploy_network` task —
+`addtask do_deploy_network after do_image_complete before do_build`, marked
+`[nostamp] = "1"` so it re-runs on *every* invocation, not just when the
+rootfs actually changed — meaning a plain
+
 ```
-scripts/deploy-to-network.sh sec-min            # both TFTP + NFS (default image)
-scripts/deploy-to-network.sh sec-full --tftp-only
+bitbake imx-image-sec-min
+```
+
+always finishes by:
+1. Purging stale RPi4 artifacts from `IMX93_TFTP_DIR` (default
+   `/home/khaled/Documents/Network/TFTP`): the top-level `Image` (RPi4
+   kernel — the imx93 kernel lives at `imx93/Image`, never clobbered),
+   `bcm2711-*.dtb`, `*.dtbo`, `overlay_map.dtb`.
+2. Copying the fresh `.wic.gz` to the TFTP root (for `run netflash`).
+3. Copying the fresh kernel `Image` + `imx93-11x11-frdm.dtb` to
+   `TFTP_DIR/imx93/` (for `run netboot`).
+
+No `sudo` involved — the TFTP directory is owned by the build user, so this
+runs as an ordinary BitBake task. Override `IMX93_TFTP_DIR` in `local.conf`
+if your TFTP root differs.
+
+#### Manual, after each build: NFS rootfs (`scripts/deploy-to-network.sh --nfs-only`)
+
+NFS deploy is **not** automatic, on purpose:
+
+```
 scripts/deploy-to-network.sh --nfs-only
+```
+
+This extracts the image's `.tar.zst` rootfs into `NFS_DIR`
+(`/home/khaled/Documents/Network/NFS-IMX93` by default) with real
+`root:root` ownership — `sudo find "$NFS_DIR" -mindepth 1 -delete` followed
+by `sudo tar --numeric-owner -xpf ... -C "$NFS_DIR"` — and will prompt for a
+`sudo` password every time, since it isn't stored anywhere.
+
+**Why this can't just be folded into the automatic step above**: an earlier
+version of this bbclass tried calling `sudo` directly from the
+`do_deploy_network` task. It reliably failed:
+```
+sudo: /etc/sudo.conf is owned by uid 65534, should be 0
+sudo: /usr/bin/sudo must be owned by uid 0 and have the setuid bit set
+```
+BitBake image tasks run under `pseudo` (its fakeroot layer), which
+intercepts `stat()`/`lstat()` and remaps real ownership to fool build logic
+into thinking it has root — and it re-injects itself (`LD_PRELOAD`) into
+*every* child process a task execs, including `sudo`. `sudo` sees pseudo's
+falsified ownership on its own binary and `/etc/sudo.conf` and refuses to
+run as a hardening measure. Nothing tried made it stick — `PSEUDO_DISABLED`,
+`PSEUDO_UNLOAD`, `env -u LD_PRELOAD`, `[fakeroot] = "0"` — the flag is
+present today only in the deprecated sense (BitBake logs a warning that a
+future version drops non-`"1"` fakeroot flags entirely), so it changed
+nothing.
+
+An unprivileged workaround (extracting the rootfs without `sudo`, so every
+file ends up owned by the build user instead of root) was tried next and
+**reverted** after it broke the board: this rootfs ships roughly 16
+setuid/setgid binaries (`busybox.suid`, `su`, `passwd`, `chage`, `chfn`,
+`chsh`, `expiry`, `gpasswd`, ...) that must stay `root:root` to actually
+grant root when invoked on the board. Under unprivileged extraction they
+silently escalate to the build user's uid instead — the board still boots
+and serial-console root login still works (the kernel lets root override
+DAC checks regardless of who owns files), but those specific privileged
+helpers quietly stop working. That's an unacceptable trade for a
+security-testing image, so NFS deploy stays a deliberate, manual,
+real-`sudo` step run from an ordinary shell instead of from BitBake.
+
+#### Everything at once, or a specific piece: `scripts/deploy-to-network.sh`
+
+```
+scripts/deploy-to-network.sh sec-min            # TFTP (redundant with auto-deploy above) + NFS
+scripts/deploy-to-network.sh sec-full --tftp-only
+scripts/deploy-to-network.sh --nfs-only         # the one command you actually need after each build
 ```
 Reads artifacts from `tmp/deploy/images/imx93frdm/` (override via
 `DEPLOY_DIR`/`TFTP_DIR`/`NFS_DIR` env vars) — build the image first with
-`bitbake`. The NFS extraction runs `sudo rm -rf`+`tar -xp` on the export
-directory to preserve device nodes/permissions from the rootfs, so it will
-prompt for a `sudo` password; the script refuses to run against `NFS_DIR`
-values of `/`, `/home`, or `/home/khaled` as a guard against a bad override.
+`bitbake`. The script refuses to run against `NFS_DIR` values of `/`,
+`/home`, or `/home/khaled` as a guard against a bad override.
 
 #### First-time bootstrap: `--flash-boot` (erase + bootloader only, no image)
 
@@ -238,14 +307,20 @@ on a machine where drive letters can shift between reboots.
 The one-time `/etc/exports` registration (`ln -sfn` + `exportfs -ra`) is
 printed, not run automatically, the first time the export is missing.
 
-### Welcome banner: `classes/imx93-welcome-banner.bbclass`
+### Welcome banner + colored shell: `classes/imx93-welcome-banner.bbclass`
 
 Both image recipes (`imx-image-sec-full` picks it up automatically via its
-`require imx-image-sec-min.bb`) inherit this class, which writes a
-build-stamped banner to `/etc/issue` (shown on the serial console the
-moment boot reaches the login prompt — no login needed) and `/etc/motd`
-(shown again after logging in), in the same `********…********` box style
-used by this layer's U-Boot boot/flash banners:
+`require imx-image-sec-min.bb`) inherit this class. It writes:
+
+- **`/etc/issue`** — colored `********…********` box, shown by `agetty` on
+  the **local/serial console only**, before login.
+- **`/etc/profile.d/imx93-banner.sh`** — the *same* box style, shown on
+  every interactive login shell, **console and SSH alike**, with live
+  hostname/IP/tty/login-time instead of build-time placeholders.
+- **`/etc/profile.d/imx93-color.sh`** — Ubuntu-style colored prompt
+  (green for a normal user, red for root) plus `ls`/`grep --color=auto`
+  and the usual `ll`/`la`/`l` aliases.
+- **No `/etc/motd`** — deliberately not written. See below for why.
 
 ```
 ********************************************************
@@ -255,27 +330,57 @@ used by this layer's U-Boot boot/flash banners:
 *  Machine    : imx93frdm
 *  Distro     : fsl-imx-xwayland 6.6-scarthgap
 *  Built      : 2026-08-29 15:42:10
-*  Builder    : Ather
+*  Builder    : Khaled El-Sayed
+*  Host       : imx93frdm (192.168.1.101)
+*  TTY        : /dev/pts/0
+*  Login time : Sat 29 Aug 2026 04:10:00 PM EEST
 ********************************************************
 
-imx93frdm login:
+root@imx93frdm:~#
 ```
+(all box lines rendered in color on an ANSI-capable terminal — cyan
+border, yellow tag, green values)
 
-`Image` (`${PN}`), `Machine`, and `Distro`/`Distro version` come straight
-from the recipe/build config, so `sec-min` vs `sec-full` and whatever
-`DISTRO`/`MACHINE` a given build used are always correct without manual
-upkeep. `Built` is a `time.strftime` snapshot taken when bitbake parses the
-class (i.e. this build's start time, same convention as the stock
-`DATE`/`TIME` bitbake variables). `Builder` defaults to `Ather`
-(`IMX93_BUILDER`, overridable per build — e.g. `IMX93_BUILDER = "someone
-else"` in `local.conf` — if someone else ever produces a build from this
-layer) so a given card/image can always be traced back to who built it and
-when, at a glance, before even logging in.
+`Image` (`${PN}`), `Machine`, `Distro`/`Distro version`, `Built`
+(`time.strftime` at bitbake-parse time), and `Builder` (`IMX93_BUILDER`,
+default `Khaled El-Sayed`, overridable in `local.conf`) are all build-time
+facts, baked once into `/etc/imx93-build-info` and read by the banner
+script at every login — so a given card/image can still always be traced
+back to who built it and when. `Host`/`TTY`/`Login time`, by contrast, are
+computed **live**, every time, by the profile.d script itself.
 
-The original `/etc/issue`'s `\n \l` escape line (agetty-substituted
-hostname/tty) is preserved at the bottom of the new banner, so the
-usual "log in on this tty as this host" info isn't lost — only the plain
-one-line NXP branding above it is replaced.
+**Why not just one file, like before**: an earlier version of this class
+wrote identical content — `\n \l` (agetty's hostname/tty escape codes)
+included — to *both* `/etc/issue` and `/etc/motd`. That worked fine on the
+serial console (`agetty` substitutes those escapes before display), but
+broke over SSH:
+```
+ssh IMX
+********************************************************
+...
+********************************************************
+
+\n \l
+
+root@imx93frdm:~#
+```
+Neither `sshd`'s `PrintMotd` nor PAM's `pam_motd` understand agetty's
+escape syntax — both just `cat` `/etc/motd` verbatim — so the literal text
+`\n \l` printed instead of a hostname/tty. Splitting the banner into an
+agetty-only `/etc/issue` and a live, real-shell-code
+`/etc/profile.d/imx93-banner.sh` fixes this at the root: the profile.d
+script computes `hostname`/`tty`/`date` itself, so there's no escape
+syntax to get wrong, and it's correct on both console and SSH by
+construction. `/etc/motd` is removed outright rather than left stale;
+since it no longer exists, `sshd`/`pam_motd` simply print nothing where
+they used to print the old file, so there's no risk of a duplicate banner
+alongside the new profile.d one.
+
+Both new `/etc/profile.d/*.sh` scripts guard themselves with
+`case "$-" in *i*) ;; *) return;; esac` so they're no-ops for
+non-interactive shells (e.g. `ssh board somecommand`, `scp`); the banner
+script additionally only fires at `SHLVL=1` (the top-level login shell),
+so it doesn't reprint every time you open a nested shell.
 
 ### Image recipes: `recipes-fsl/images/`
 
@@ -409,7 +514,7 @@ into this repo — both this layer and `meta-security` are already registered.
 Standard NXP setup flow:
 
 ```
-cd /data/wksp/IMX93
+cd /home/khaled/Data/Yocto/IMX93
 source setup-environment frdm-imx93
 bitbake imx-image-sec-min
 # or
@@ -419,13 +524,50 @@ bitbake imx-image-sec-full
 (Equivalent to running `imx-frdm-setup.sh` fresh, but re-uses the existing
 build directory instead of re-generating `conf/`, which has previously been
 observed to silently regenerate/corrupt `bblayers.conf` and drop custom layer
-registration — prefer `source setup-environment frdm-imx93` for this reason.)
+registration — prefer `source setup-environment frdm-imx93` for this reason.
+Run `source setup-environment frdm-imx93` from the workspace root, not from
+inside `frdm-imx93/` itself — passing the build-dir name while already
+inside it makes it look for a nonexistent nested `frdm-imx93/frdm-imx93/`.)
 
-Output artifacts land in
-`tmp/deploy/images/imx93frdm/imx-image-<name>-imx93frdm.rootfs.wic.zst`
-(+ matching `.wic.bmap`), flashed to SD card the same way as
-`imx-image-full`:
+### After the build: what happens automatically vs. what you run yourself
 
+`bitbake imx-image-sec-min` (or `sec-full`) does **all** of the following
+without any extra flags, every single time:
+
+1. Builds the image as usual — output lands in
+   `tmp/deploy/images/imx93frdm/imx-image-<name>-imx93frdm.rootfs.wic.zst`
+   (+ `.wic.bmap`, + `.wic.gz` — see `netflash` above for why the extra
+   `.gz` variant exists), `Image-imx93frdm.bin`, `imx93-11x11-frdm-imx93frdm.dtb`,
+   `imx-image-<name>-imx93frdm.rootfs.tar.zst`, and the shared `imx-boot`
+   bootloader container.
+2. **Auto-deploys to TFTP** (`imx93-deploy-network.bbclass`, see above) —
+   purges stale RPi4 files, copies the fresh `.wic.gz`/kernel/dtb into place.
+   No extra command needed for this part.
+
+That's it for what's automatic. **NFS is not touched by bitbake** — after
+each build, run this yourself (see rationale above):
+```
+scripts/deploy-to-network.sh --nfs-only
+```
+It prompts for `sudo` once and extracts the rootfs with correct `root:root`
+ownership.
+
+To flash a full image to an SD card the traditional way (instead of
+`netflash` or NFS-root boot):
 ```
 sudo bmaptool copy imx-image-<name>-imx93frdm.rootfs.wic.zst /dev/sdX
 ```
+Or, for a first-time/blank card meant to run entirely off the network
+afterward, see `--flash-boot` above instead — it writes only the bootloader.
+
+### Typical day-to-day loop
+
+```
+bitbake imx-image-sec-min                          # build + auto TFTP deploy
+scripts/deploy-to-network.sh --nfs-only             # manual NFS deploy (sudo prompt)
+# power-cycle the board, or at the U-Boot prompt: run netboot
+```
+With the network-first boot patch (`net_first_bootcmd`, see above) already
+flashed to the board's bootloader, a plain power-cycle is enough — no
+manual `run netboot` needed unless you want the DHCP/read-only variant
+instead.
