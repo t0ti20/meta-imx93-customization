@@ -23,11 +23,18 @@
 # chfn, chsh, expiry, gpasswd, ...) that must stay root-owned to actually
 # grant root on the board.
 #
+# NFS safe-redeploy: set BOARD_IP to the board's IP address and --nfs-only
+# (or the default "all" mode) will automatically SSH-reboot the board before
+# wiping the NFS rootfs, wait for it to go down, deploy, then wait for it to
+# come back up.  Without BOARD_IP, the board must be manually powered off
+# before running --nfs-only (wiping a live NFS root crashes the running OS).
+#
 # Env overrides (defaults match this host's actual tftpd-hpa/nfs-kernel-server
 # setup as of 2026-08-28):
 #   DEPLOY_DIR   tmp/deploy/images/imx93frdm to read build artifacts from
 #   TFTP_DIR     TFTP server root (RPi4 artifacts are purged from here on deploy)
 #   NFS_DIR      real directory backing the NFS export for this board
+#   BOARD_IP     board IP for SSH reboot before NFS deploy (default: 192.168.1.101)
 #
 # NOTE: bitbake imx-image-sec-min auto-deploys TFTP after every successful
 # build (via the imx93-deploy-network bbclass). NFS deploy is manual-only,
@@ -54,7 +61,7 @@ while [[ $# -gt 0 ]]; do
             FLASH_BOOT_DEV="$1"
             ;;
         -h|--help)
-            sed -n '2,37p' "$0"
+            sed -n '2,43p' "$0"
             exit 0
             ;;
         *)
@@ -69,6 +76,7 @@ DEPLOY_DIR="${DEPLOY_DIR:-/home/khaled/Data/Yocto/IMX93/frdm-imx93/tmp/deploy/im
 TFTP_DIR="${TFTP_DIR:-/home/khaled/Documents/Network/TFTP}"
 NFS_DIR="${NFS_DIR:-/home/khaled/Documents/Network/NFS-IMX93}"
 NFS_EXPORT_LINK="/exports/imx93"
+BOARD_IP="${BOARD_IP:-192.168.1.101}"
 
 WIC_GZ="${DEPLOY_DIR}/${IMAGE_NAME}-${MACHINE}.rootfs.wic.gz"
 ROOTFS_TAR="${DEPLOY_DIR}/${IMAGE_NAME}-${MACHINE}.rootfs.tar.zst"
@@ -77,6 +85,42 @@ DTB="${DEPLOY_DIR}/imx93-11x11-frdm-${MACHINE}.dtb"
 # Machine-wide bootloader container (SPL+ATF+OP-TEE+U-Boot proper), not tied
 # to any particular rootfs image -- same file regardless of sec-min/sec-full.
 IMX_BOOT="${DEPLOY_DIR}/imx-boot"
+
+_ssh_opts=(-o ConnectTimeout=3 -o StrictHostKeyChecking=no -o BatchMode=yes)
+
+reboot_board_via_ssh() {
+    local ip="$1"
+
+    if ! ssh "${_ssh_opts[@]}" "root@$ip" true 2>/dev/null; then
+        echo "==> Board at $ip not reachable via SSH -- board is already off, proceeding with NFS deploy"
+        return 0
+    fi
+
+    echo "==> Sending reboot to root@$ip via SSH..."
+    ssh "${_ssh_opts[@]}" "root@$ip" 'reboot' 2>/dev/null || true
+
+    echo "==> Waiting for board to shut down..."
+    local i
+    for i in $(seq 1 30); do
+        sleep 2
+        ssh "${_ssh_opts[@]}" "root@$ip" true 2>/dev/null || { echo "==> Board is down -- safe to update NFS rootfs."; return 0; }
+    done
+    echo "WARNING: Board at $ip did not go down within 60s -- proceeding anyway (check it manually)"
+}
+
+wait_for_board() {
+    local ip="$1"
+    echo "==> Waiting for board to come back up at root@$ip ..."
+    local i
+    for i in $(seq 1 60); do
+        sleep 5
+        if ssh "${_ssh_opts[@]}" "root@$ip" true 2>/dev/null; then
+            echo "==> Board is back up."
+            return 0
+        fi
+    done
+    echo "WARNING: Board at $ip did not respond within 5 minutes -- check it manually."
+}
 
 deploy_tftp() {
     [[ -f "$WIC_GZ" ]] || { echo "ERROR: $WIC_GZ not found -- build $IMAGE_NAME first" >&2; exit 1; }
@@ -113,6 +157,16 @@ deploy_nfs() {
         ""|/|/home|/home/khaled) echo "ERROR: refusing to operate on NFS_DIR='$NFS_DIR'" >&2; exit 1 ;;
     esac
 
+    # Reboot board via SSH before wiping NFS rootfs so the board is safely
+    # down when we replace its root filesystem.  Without BOARD_IP the board
+    # must be manually powered off first -- wiping a live NFS root crashes it.
+    if [[ -n "$BOARD_IP" ]]; then
+        reboot_board_via_ssh "$BOARD_IP"
+    else
+        echo "NOTE: BOARD_IP not set -- make sure the board is powered off before proceeding."
+        echo "      Set BOARD_IP=<ip> to have this script reboot it automatically."
+    fi
+
     if [[ ! -d "$NFS_DIR" ]]; then
         echo "==> Creating $NFS_DIR"
         mkdir -p "$NFS_DIR"
@@ -131,6 +185,10 @@ deploy_nfs() {
     # keeping the directory itself avoids stale NFS filehandles on clients.
     sudo find "$NFS_DIR" -mindepth 1 -delete
     sudo tar --numeric-owner -xpf "$ROOTFS_TAR" -C "$NFS_DIR"
+
+    if [[ -n "$BOARD_IP" ]]; then
+        wait_for_board "$BOARD_IP"
+    fi
 }
 
 deploy_flash_boot() {

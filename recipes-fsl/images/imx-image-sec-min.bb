@@ -47,6 +47,8 @@ IMAGE_INSTALL += " \
     \
     strace gdb vim htop \
     udev-extraconf \
+    \
+    hello-imx93 \
 "
 
 export IMAGE_BASENAME = "imx-image-sec-min"
