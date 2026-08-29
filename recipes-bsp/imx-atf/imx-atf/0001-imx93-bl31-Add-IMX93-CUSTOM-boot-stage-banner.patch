@@ -1,0 +1,63 @@
+diff --git a/plat/imx/imx93/imx93_bl31_setup.c b/plat/imx/imx93/imx93_bl31_setup.c
+index 7b7aa30f3..c20f72944 100644
+--- a/plat/imx/imx93/imx93_bl31_setup.c
++++ b/plat/imx/imx93/imx93_bl31_setup.c
+@@ -75,6 +75,17 @@ void bl31_early_platform_setup2(u_register_t arg0, u_register_t arg1,
+ 	/* This console is only used for boot stage */
+ 	console_set_scope(&console, CONSOLE_FLAG_BOOT);
+ 
++	NOTICE("********************************************************\n");
++	NOTICE("*  [IMX93-CUSTOM] NXP i.MX93 FRDM Security Testing Image\n");
++	NOTICE("*  Stage   : BL31 - EL3 Runtime Firmware (Secure Monitor)\n");
++#if defined(SPD_opteed)
++	NOTICE("*  SPD     : OP-TEE enabled (BL32 @ 0x%x)\n", (unsigned int)BL32_BASE);
++#else
++	NOTICE("*  SPD     : no TEE, direct to BL33\n");
++#endif
++	NOTICE("*  BL33    : U-Boot @ 0x%x\n", (unsigned int)PLAT_NS_IMAGE_OFFSET);
++	NOTICE("********************************************************\n");
++
+ 	/*
+ 	 * tell BL3-1 where the non-secure software image is located
+ 	 * and the entry state information.
+@@ -108,6 +119,7 @@ void bl31_early_platform_setup2(u_register_t arg0, u_register_t arg1,
+ 
+ void bl31_plat_arch_setup(void)
+ {
++	NOTICE("[IMX93-CUSTOM] BL31: arch setup -- MMU, GPIO, TRDC\n");
+ 	/* no coherence memory support on i.MX9 */
+ 	const mmap_region_t bl_regions[] = {
+ 		MAP_BL31_TOTAL,
+@@ -144,10 +156,12 @@ void bl31_plat_arch_setup(void)
+ 
+ 	/* trdc must be initialized */
+ 	trdc_config();
++	NOTICE("[IMX93-CUSTOM] BL31: arch setup done -- MMU on, TRDC ready\n");
+ }
+ 
+ void bl31_platform_setup(void)
+ {
++	NOTICE("[IMX93-CUSTOM] BL31: platform setup -- timers, GIC, DRAM\n");
+ 	generic_delay_timer_init();
+ 
+ 	/* get soc info */
+@@ -158,10 +172,19 @@ void bl31_platform_setup(void)
+ 
+ 	plat_gic_driver_init();
+ 	plat_gic_init();
++	NOTICE("[IMX93-CUSTOM] BL31: platform setup complete\n");
+ }
+ 
+ void bl31_plat_runtime_setup(void)
+ {
++	NOTICE("********************************************************\n");
++	NOTICE("*  [IMX93-CUSTOM] BL31 complete\n");
++#if defined(SPD_opteed)
++	NOTICE("*  Handoff : OP-TEE (BL32) -> U-Boot (BL33)\n");
++#else
++	NOTICE("*  Handoff : direct to U-Boot (BL33)\n");
++#endif
++	NOTICE("********************************************************\n");
+ 	console_switch_state(CONSOLE_FLAG_RUNTIME);
+ }
+ 
