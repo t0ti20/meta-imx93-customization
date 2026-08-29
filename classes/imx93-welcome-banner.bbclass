@@ -122,11 +122,11 @@ alias la='ls -A'
 alias l='ls -CF'
 
 if [ -n "$BASH_VERSION" ]; then
-	if [ "$(id -u)" -eq 0 ]; then
-		PS1='\[\033[01;31m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-	else
-		PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
-	fi
+	PS1='\[\033[1;32m\]\u@\h\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]\$ '
+else
+	_e=$(printf '\033')
+	PS1="${_e}[1;32m\u@\h${_e}[0m:${_e}[1;34m\w${_e}[0m\$ "
+	unset _e
 fi
 EOF
 	chmod 0644 "${IMAGE_ROOTFS}${sysconfdir}/profile.d/imx93-color.sh"
@@ -134,4 +134,13 @@ EOF
 	# No static /etc/motd -- see the header comment above. Remove any stale
 	# copy an earlier build of this class may have left in place.
 	rm -f "${IMAGE_ROOTFS}${sysconfdir}/motd"
+
+	# Suppress kernel printk messages on the UART console (they interrupt
+	# interactive use). Level 3 = KERN_ERR: only real errors reach the
+	# terminal; everything else stays in the kernel ring buffer (dmesg still
+	# shows it all).
+	install -d "${IMAGE_ROOTFS}${sysconfdir}/sysctl.d"
+	cat > "${IMAGE_ROOTFS}${sysconfdir}/sysctl.d/99-imx93-console-loglevel.conf" <<'EOF'
+kernel.printk = 3 4 1 3
+EOF
 }
