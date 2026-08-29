@@ -1,0 +1,187 @@
+From 5b6e8c1e2d4a7f39b0c6e91da2f8c5b7e4a1d0f2 Mon Sep 17 00:00:00 2001
+From: IMX93 Customization <dev@localhost>
+Date: Sat, 29 Aug 2026 12:30:00 +0000
+Subject: [PATCH] imx93_frdm: Add network-first boot with static IP
+
+Reverses this board's boot priority: on every normal power-on, try a
+static-IP TFTP+NFS network boot *before* falling back to the existing
+SD-card boot chain, instead of the other way around. Also enables the
+autoboot interrupt window (bootdelay was 0, meaning "Hit any key to
+stop autoboot" gave no actual chance to interrupt) and gives the
+network path a writable NFS root (previous default mounted read-only).
+
+ - CONFIG_BOOTDELAY=3 in imx93_11x11_frdm_defconfig: restores a real
+   3-second autoboot interrupt window.
+ - CONFIG_BOOTCOMMAND gains a new first step, `run net_first_bootcmd`,
+   ahead of the existing (untouched) `run distro_bootcmd;run
+   bsp_bootcmd`. If network boot succeeds it calls booti directly and
+   nothing after it ever runs; if it fails it prints a banner and
+   returns, falling through to the existing distro_bootcmd/bsp_bootcmd
+   chain exactly as before this patch (which boots from the on-board
+   SD card, mmc1).
+ - New NET_FIRST_BOOTCMD_ENV block in imx93_frdm.h defines
+   `net_first_bootcmd` and its supporting `netboot_*` variables: static
+   ipaddr/netmask/gatewayip/serverip (no DHCP), imx93-specific TFTP
+   paths (imx93/Image, imx93/imx93-11x11-frdm.dtb -- this board's TFTP
+   root is shared with other boards' netboot setups, so files live
+   under an imx93/ subdirectory rather than the generic top-level
+   names other macros in this file default to), and a writable NFS
+   root (nfsroot=...,rw, unlike the existing read-only-by-default
+   `netargs`/`netboot` pair which this block does not modify).
+   `netretry=no` / `autoload=no` keep a missing/unreachable TFTP
+   server from stalling boot in a long retry storm -- one failed
+   attempt falls straight through to the SD card.
+
+Also extends the existing "[BOOT SOURCE]"-style banner logging (already
+used by NETFLASH_ENV's "[FLASH]" banners and this patch's own
+net_first_bootcmd) to the pre-existing mmcboot, netboot, and
+bsp_bootcmd scripts, which previously only printed a single plain
+line ("Booting from mmc ...", "Booting from net ...", "Running BSP
+bootcmd ..."). Every boot-path decision point now prints a matching
+"****...****" banner, so the serial console makes it unambiguous
+which of the (now three) boot paths -- net_first_bootcmd,
+distro_bootcmd's UEFI/extlinux scan, or bsp_bootcmd's classic
+FAT+Image scan -- actually ran and what it decided, without reading
+the U-Boot environment definitions.
+
+This is purely additive: distro_bootcmd, mmcargs, netargs, and the
+actual control flow of mmcboot/netboot/bsp_bootcmd are all unchanged
+-- only their existing single-line status echo was replaced with an
+equivalent banner. A card with a real image flashed by `netflash`
+still boots from it exactly as before whenever the network path is
+unavailable.
+---
+ configs/imx93_11x11_frdm_defconfig |  3 +-
+ include/configs/imx93_frdm.h       | 78 +++++++++++++++++++++++++++++++----
+ 2 files changed, 74 insertions(+), 7 deletions(-)
+
+diff --git a/configs/imx93_11x11_frdm_defconfig b/configs/imx93_11x11_frdm_defconfig
+index bdfe6d905b9..37dfe2ac54c 100644
+--- a/configs/imx93_11x11_frdm_defconfig
++++ b/configs/imx93_11x11_frdm_defconfig
+@@ -30,7 +30,8 @@ CONFIG_FIT=y
+ CONFIG_FIT_SIGNATURE=y
+ CONFIG_DISTRO_DEFAULTS=y
+ CONFIG_OF_SYSTEM_SETUP=y
+-CONFIG_BOOTCOMMAND="run sr_ir_v2_cmd;run distro_bootcmd;run bsp_bootcmd"
++CONFIG_BOOTDELAY=3
++CONFIG_BOOTCOMMAND="run sr_ir_v2_cmd;run net_first_bootcmd;run distro_bootcmd;run bsp_bootcmd"
+ CONFIG_DEFAULT_FDT_FILE="imx93-11x11-frdm.dtb"
+ CONFIG_SYS_CBSIZE=2048
+ CONFIG_SYS_PBSIZE=2074
+diff --git a/include/configs/imx93_frdm.h b/include/configs/imx93_frdm.h
+index a4d4dced115..016d39821e8 100644
+--- a/include/configs/imx93_frdm.h
++++ b/include/configs/imx93_frdm.h
+@@ -94,6 +94,65 @@
+ 			"echo ********************************************************; " \
+ 		"fi\0"
+
++/*
++ * Network-first boot policy: on every normal boot, before this board's
++ * existing SD-card boot chain (distro_bootcmd + bsp_bootcmd below, both
++ * completely untouched by this block) gets a chance to run, try once to
++ * load the kernel + device tree over TFTP and mount root over NFS -- all
++ * static IP, no DHCP, so there's no dependency on a DHCP server being up.
++ * "netretry=no" and "autoload=no" make a missing/unreachable TFTP server
++ * fail fast (one attempt, no retry storm) instead of stalling the boot for
++ * a long time before falling back. If either download fails, this script
++ * prints a banner and returns *without* booting anything -- CONFIG_BOOTCOMMAND
++ * then continues on to run distro_bootcmd;run bsp_bootcmd exactly as it did
++ * before this patch, which boot from the on-board SD card (mmc1).
++ */
++#define NET_FIRST_BOOTCMD_ENV \
++	"netboot_ipaddr=192.168.1.101\0" \
++	"netboot_netmask=255.255.255.0\0" \
++	"netboot_gatewayip=192.168.1.1\0" \
++	"netboot_serverip=192.168.1.100\0" \
++	"netboot_ethact=eth1\0" \
++	"netboot_image=imx93/Image\0" \
++	"netboot_fdt=imx93/imx93-11x11-frdm.dtb\0" \
++	"netboot_nfsroot=/exports/imx93\0" \
++	"netboot_args=setenv bootargs ${jh_clk} ${mcore_clk} console=${console} " \
++		"root=/dev/nfs " \
++		"ip=${netboot_ipaddr}:${netboot_serverip}:${netboot_gatewayip}:${netboot_netmask}::${netboot_ethact}:off " \
++		"nfsroot=${netboot_serverip}:${netboot_nfsroot},v3,tcp,rw\0" \
++	"net_first_bootcmd=" \
++		"echo; " \
++		"echo ********************************************************; " \
++		"echo *  [BOOT SOURCE] Trying NETWORK (static IP, no DHCP)      ; " \
++		"echo ********************************************************; " \
++		"setenv ipaddr ${netboot_ipaddr}; " \
++		"setenv netmask ${netboot_netmask}; " \
++		"setenv gatewayip ${netboot_gatewayip}; " \
++		"setenv serverip ${netboot_serverip}; " \
++		"setenv ethact ${netboot_ethact}; " \
++		"setenv autoload no; " \
++		"setenv netretry no; " \
++		"if tftpboot ${loadaddr} ${netboot_image}; then " \
++			"if tftpboot ${fdt_addr_r} ${netboot_fdt}; then " \
++				"run netboot_args; " \
++				"echo ********************************************************; " \
++				"echo *  [BOOT SOURCE] NETWORK OK -- kernel+dtb via TFTP        ; " \
++				"echo *  [BOOT SOURCE] root filesystem via NFS (rw)             ; " \
++				"echo ********************************************************; " \
++				"booti ${loadaddr} - ${fdt_addr_r}; " \
++			"else " \
++				"echo ********************************************************; " \
++				"echo *  [BOOT SOURCE] NETWORK FAILED (no device tree)          ; " \
++				"echo *  [BOOT SOURCE] falling back to INTERNAL SD CARD         ; " \
++				"echo ********************************************************; " \
++			"fi; " \
++		"else " \
++			"echo ********************************************************; " \
++			"echo *  [BOOT SOURCE] NETWORK FAILED (server unreachable)      ; " \
++			"echo *  [BOOT SOURCE] falling back to INTERNAL SD CARD         ; " \
++			"echo ********************************************************; " \
++		"fi\0"
++
+ #define SR_IR_V2_COMMAND \
+ 	"nodes=/usbg1 /usbg2 /wdt-reboot /rm67199_panel /dsi-host /display-subsystem /soc@0/bus@44000000/dma-controller@44000000 /soc@0/bus@44000000/sai@443b0000 /soc@0/bus@44000000/mqs1 /soc@0/bus@44000000/bbnsm@44440000 /soc@0/bus@44000000/system-controller@44460000 /soc@0/bus@44000000/tmu@44482000 /soc@0/bus@44000000/micfil@44520000 /soc@0/bus@42000000/dma-controller@42000000 /soc@0/bus@44000000/i3c-master@44330000 /soc@0/bus@42000000/i3c-master@42520000 /soc@0/bus@42000000/sai@42650000 /soc@0/bus@42000000/sai@42660000 /soc@0/bus@42000000/mqs2 /soc@0/bus@42000000/xcvr@42680000 /soc@0/bus@42000000/flexio@425c0000 /soc@0/bus@42800000/epxp@4ae20000 /soc@0/bus@42800000/camera /soc@0/efuse@47510000 /soc@0/system-controller@4ac10000 /soc@0/ldb@4ac10020 /soc@0/phy@4ac10024 /soc@0/ele-mu /soc@0/dsi@4ae10000 /soc@0/lcd-controller@4ae30000 /soc@0/blk-ctrl@4e010000 /soc@0/memory-controller@4e300000 /soc@0/bus@44000000/i2c@44350000/pmic@25 /imx93-lpm  \0" \
+ 	"sr_ir_v2_cmd=cp.b ${fdtcontroladdr} ${fdt_addr_r} 0x10000;"\
+@@ -116,6 +175,7 @@
+ 	BOOTENV \
+ 	AHAB_ENV \
+ 	NETFLASH_ENV \
++	NET_FIRST_BOOTCMD_ENV \
+ 	SR_IR_V2_COMMAND \
+ 	"prepare_mcore=setenv mcore_clk clk-imx93.mcore_booted;\0" \
+ 	"scriptaddr=0x83500000\0" \
+@@ -144,7 +204,10 @@
+ 	"loadcntr=fatload mmc ${mmcdev}:${mmcpart} ${cntr_addr} ${cntr_file}\0" \
+ 	"auth_os=auth_cntr ${cntr_addr}\0" \
+ 	"boot_os=booti ${loadaddr} - ${fdt_addr_r};\0" \
+-	"mmcboot=echo Booting from mmc ...; " \
++	"mmcboot=echo; " \
++		"echo ********************************************************; " \
++		"echo *  [BOOT SOURCE] Booting from INTERNAL SD CARD (mmc)      ; " \
++		"echo ********************************************************; " \
+ 		"run mmcargs; " \
+ 		"if test ${sec_boot} = yes; then " \
+ 			"if run auth_os; then " \
+@@ -166,7 +229,10 @@
+ 	"netargs=setenv bootargs ${jh_clk} ${mcore_clk} console=${console} " \
+ 		"root=/dev/nfs " \
+ 		"ip=dhcp nfsroot=${serverip}:${nfsroot},v3,tcp\0" \
+-	"netboot=echo Booting from net ...; " \
++	"netboot=echo; " \
++		"echo ********************************************************; " \
++		"echo *  [BOOT SOURCE] Booting from NETWORK (dhcp, ro nfsroot)  ; " \
++		"echo ********************************************************; " \
+ 		"run netargs;  " \
+ 		"if test ${ip_dyn} = yes; then " \
+ 			"setenv get_cmd dhcp; " \
+@@ -192,7 +258,10 @@
+ 				"fi; " \
+ 			"fi;" \
+ 		"fi;\0" \
+-	"bsp_bootcmd=echo Running BSP bootcmd ...; " \
++	"bsp_bootcmd=echo; " \
++		"echo ********************************************************; " \
++		"echo *  [BOOT SOURCE] Trying INTERNAL SD CARD (bsp_bootcmd)     ; " \
++		"echo ********************************************************; " \
+ 		"mmc dev ${mmcdev}; if mmc rescan; then " \
+ 		   "if run loadbootscript; then " \
+ 			   "run bootscript; " \
+--
+2.34.1

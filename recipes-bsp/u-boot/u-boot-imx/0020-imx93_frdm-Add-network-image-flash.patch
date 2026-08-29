@@ -27,14 +27,21 @@ to the boot media on a failed transfer. Note this still performs a
 raw write to the board's own boot media: interrupting power mid-write
 can corrupt the card, so this should be tested against a spare/scratch
 SD card before relying on it against the card in active use.
+
+Each stage (download, decompress, write, done, or any failure) prints
+a "****...****" banner tagged "[FLASH]", matching the "[BOOT SOURCE]"
+banner style used for boot-path logging elsewhere in this layer, so
+the serial console makes it unambiguous what netflash is doing at any
+given moment without reading the command definition.
 ---
- include/configs/imx93_frdm.h | 35 +++++++++++++++++++++++++++++++++++
- 1 file changed, 35 insertions(+)
+ include/configs/imx93_frdm.h | 53 +++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
 
 diff --git a/include/configs/imx93_frdm.h b/include/configs/imx93_frdm.h
+index 547835f748b..a4d4dced115 100644
 --- a/include/configs/imx93_frdm.h
 +++ b/include/configs/imx93_frdm.h
-@@ -42,6 +42,40 @@
+@@ -42,6 +42,58 @@
  	"jh_netboot=setenv fdtfile ${jh_root_dtb}; " \
  		    "setenv jh_clk clk_ignore_unused mem=1248MB kvm-arm.mode=nvhe; run netboot; \0 "
 
@@ -58,24 +65,42 @@ diff --git a/include/configs/imx93_frdm.h b/include/configs/imx93_frdm.h
 +	"netflash_comp_addr=0xA0000000\0" \
 +	"netflash_img_addr=0xB0000000\0" \
 +	"netflash=" \
++		"echo; " \
++		"echo ********************************************************; " \
++		"echo *  [FLASH] Fetching image over TFTP: ${netflash_gz_file}  ; " \
++		"echo ********************************************************; " \
 +		"if tftpboot ${netflash_comp_addr} ${netflash_gz_file}; then " \
++			"echo ********************************************************; " \
++			"echo *  [FLASH] Download OK -- decompressing                   ; " \
++			"echo ********************************************************; " \
 +			"if unzip ${netflash_comp_addr} ${netflash_img_addr}; then " \
 +				"setexpr netflash_blkcnt ${filesize} + 0x1ff; " \
 +				"setexpr netflash_blkcnt ${netflash_blkcnt} / 0x200; " \
++				"echo ********************************************************; " \
++				"echo *  [FLASH] Writing to INTERNAL SD CARD (mmc 1) ...        ; " \
++				"echo ********************************************************; " \
 +				"mmc dev 1; " \
 +				"mmc write ${netflash_img_addr} 0x0 ${netflash_blkcnt}; " \
-+				"echo netflash: done, ${netflash_blkcnt} blocks written; " \
++				"echo ********************************************************; " \
++				"echo *  [FLASH] DONE -- ${netflash_blkcnt} blocks written to SD ; " \
++				"echo ********************************************************; " \
 +			"else " \
-+				"echo netflash: decompression failed, NOT touching storage; " \
++				"echo ********************************************************; " \
++				"echo *  [FLASH] FAILED -- decompression error                  ; " \
++				"echo *  [FLASH] NOT touching storage                           ; " \
++				"echo ********************************************************; " \
 +			"fi; " \
 +		"else " \
-+			"echo netflash: TFTP download failed, NOT touching storage; " \
++			"echo ********************************************************; " \
++			"echo *  [FLASH] FAILED -- TFTP download error                  ; " \
++			"echo *  [FLASH] NOT touching storage                           ; " \
++			"echo ********************************************************; " \
 +		"fi\0"
 +
  #define SR_IR_V2_COMMAND \
  	"nodes=/usbg1 /usbg2 /wdt-reboot /rm67199_panel /dsi-host /display-subsystem /soc@0/bus@44000000/dma-controller@44000000 /soc@0/bus@44000000/sai@443b0000 /soc@0/bus@44000000/mqs1 /soc@0/bus@44000000/bbnsm@44440000 /soc@0/bus@44000000/system-controller@44460000 /soc@0/bus@44000000/tmu@44482000 /soc@0/bus@44000000/micfil@44520000 /soc@0/bus@42000000/dma-controller@42000000 /soc@0/bus@44000000/i3c-master@44330000 /soc@0/bus@42000000/i3c-master@42520000 /soc@0/bus@42000000/sai@42650000 /soc@0/bus@42000000/sai@42660000 /soc@0/bus@42000000/mqs2 /soc@0/bus@42000000/xcvr@42680000 /soc@0/bus@42000000/flexio@425c0000 /soc@0/bus@42800000/epxp@4ae20000 /soc@0/bus@42800000/camera /soc@0/efuse@47510000 /soc@0/system-controller@4ac10000 /soc@0/ldb@4ac10020 /soc@0/phy@4ac10024 /soc@0/ele-mu /soc@0/dsi@4ae10000 /soc@0/lcd-controller@4ae30000 /soc@0/blk-ctrl@4e010000 /soc@0/memory-controller@4e300000 /soc@0/bus@44000000/i2c@44350000/pmic@25 /imx93-lpm  \0" \
  	"sr_ir_v2_cmd=cp.b ${fdtcontroladdr} ${fdt_addr_r} 0x10000;"\
-@@ -63,6 +97,7 @@
+@@ -63,6 +115,7 @@
  	CFG_MFG_ENV_SETTINGS \
  	BOOTENV \
  	AHAB_ENV \

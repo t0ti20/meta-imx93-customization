@@ -61,6 +61,11 @@ run netflash
 This only proceeds to `mmc write` if both the TFTP download and the gzip
 decompression report success — a failed/interrupted download leaves the SD
 card untouched, so a bad transfer doesn't leave the board half-flashed.
+Every stage prints a `********…********` banner tagged `[FLASH]`
+(fetching, download OK/decompressing, writing to SD, done, or either
+failure) — same visual style as the `[BOOT SOURCE]` banners used
+elsewhere in this layer, so the serial console makes each step
+unambiguous.
 
 **Risk**: `netflash` performs a raw write to the same SD card (`mmc dev 1`)
 the board may currently be running from. Interrupting power mid-write can
@@ -75,6 +80,72 @@ is unchanged. `imx-image-sec-full.bb` `require`s `imx-image-sec-min.bb`, so
 it inherits `IMAGE_FSTYPES += "wic.gz"` too — the same mechanism works for
 both images out of the box (`netflash_gz_file` only needs a `setenv` if you
 want to flash `sec-full` instead of the baked-in `sec-min` default).
+
+### Board feature: network-first boot, static IP (`net_first_bootcmd`)
+
+`recipes-bsp/u-boot/u-boot-imx/0030-imx93_frdm-Add-network-first-boot-with-static-IP.patch`
+changes the board's *default, no-interaction* boot policy: on every normal
+power-on, it now tries a TFTP+NFS network boot first, and only falls back to
+the on-board SD card if that fails — the reverse of the stock priority
+(SD/eMMC/USB first, network only as `bsp_bootcmd`'s last resort). Three
+changes, all in `imx93_11x11_frdm_defconfig` / `imx93_frdm.h`:
+
+- **`CONFIG_BOOTDELAY=3`** — was `0`. Previously "Hit any key to stop
+  autoboot" gave a literal zero-second window; there was no way to actually
+  interrupt autoboot by hand. Now there's a real 3-second window.
+- **`CONFIG_BOOTCOMMAND`** gains a new first step: `run sr_ir_v2_cmd;run
+  net_first_bootcmd;run distro_bootcmd;run bsp_bootcmd` (was `...;run
+  distro_bootcmd;run bsp_bootcmd`). `distro_bootcmd`/`bsp_bootcmd` — the
+  existing SD/eMMC/USB boot chain — are **not modified at all**; they still
+  run exactly as before whenever `net_first_bootcmd` doesn't boot anything.
+- **New `net_first_bootcmd` env script** (in `imx93_frdm.h`, alongside the
+  existing `NETFLASH_ENV` block): sets static `ipaddr=192.168.1.101` /
+  `netmask=255.255.255.0` / `gatewayip=192.168.1.1` / `serverip=192.168.1.100`
+  (no DHCP anywhere in this path), attempts `tftpboot` of `imx93/Image` then
+  `imx93/imx93-11x11-frdm.dtb`, and on success mounts root over NFS
+  **read-write** (`nfsroot=...,v3,tcp,rw` — unlike the older `netboot`/
+  `netargs` pair below, which is untouched and still mounts read-only) before
+  calling `booti` directly. `netretry=no` / `autoload=no` keep a
+  missing/unreachable TFTP server from stalling boot in a long retry storm —
+  one failed attempt and it falls straight through to `distro_bootcmd`/
+  `bsp_bootcmd` (SD card) instead.
+
+**Boot-source banners, everywhere**: this patch also replaces the single
+plain status lines the *existing*, untouched `mmcboot`/`netboot`/
+`bsp_bootcmd` scripts used to print (`"Booting from mmc ..."`, `"Booting
+from net ..."`, `"Running BSP bootcmd ..."`) with the same
+`********…********` banner style, tagged `[BOOT SOURCE]`, that
+`net_first_bootcmd` uses. Only the echo lines changed — the actual control
+flow of `mmcboot`/`netboot`/`bsp_bootcmd` is untouched. Every real
+boot-path decision anywhere in this BSP now prints a matching banner:
+trying network (static), network OK / network failed + falling back,
+trying internal SD card, booting from internal SD card, booting from
+network (old DHCP path, if ever manually invoked or reached via
+`bsp_bootcmd`'s own fallback). Read the serial console and it's unambiguous
+which of the three boot paths actually ran and what it decided, without
+reading the U-Boot environment definitions.
+`netflash` (the flashing command, not a boot path) got the same treatment
+in its own patch — see `[FLASH]`-tagged banners below.
+
+**This is a real firmware behavior change**, not just an env default — it
+needs a `u-boot-imx` rebuild (`CONFIG_BOOTDELAY`/`CONFIG_BOOTCOMMAND` are
+Kconfig values, baked into the compiled `imx-boot`) and a re-flash of just
+the bootloader via `--flash-boot` (see below) to take effect on
+already-provisioned hardware. A card already flashed with a full image via
+`netflash` is unaffected either way whenever the network path is
+unavailable — it still boots from SD exactly as it always did, since
+`distro_bootcmd`/`bsp_bootcmd`/`mmcboot` are untouched.
+
+Note there are now **two independent network-boot paths** in this BSP,
+intentionally not merged:
+- `net_first_bootcmd` (new, above) — automatic, static IP, `imx93/`-prefixed
+  TFTP paths, read-write NFS root.
+- `netboot` (existing, from meta-imx-frdm, unmodified) — manual-only unless
+  `bsp_bootcmd` falls all the way through to it, DHCP, read-only NFS root,
+  generic (non-`imx93/`-prefixed) TFTP paths. Still reachable by typing `run
+  netboot` yourself, e.g. if you want the DHCP/read-only behavior for some
+  reason, or by `bsp_bootcmd`'s own internal fallback if *both* the network
+  and the SD card fail for `net_first_bootcmd`/`bsp_bootcmd` respectively.
 
 ### Deploying to this host's TFTP/NFS servers: `scripts/deploy-to-network.sh`
 
@@ -122,6 +193,48 @@ Reads artifacts from `tmp/deploy/images/imx93frdm/` (override via
 directory to preserve device nodes/permissions from the rootfs, so it will
 prompt for a `sudo` password; the script refuses to run against `NFS_DIR`
 values of `/`, `/home`, or `/home/khaled` as a guard against a bad override.
+
+#### First-time bootstrap: `--flash-boot` (erase + bootloader only, no image)
+
+For a blank (or previously-used) SD card, there's no need to `dd` a full
+`.wic` image just to get the board alive — a first boot only needs the
+bootloader; the kernel and rootfs come from `net_first_bootcmd`/`netboot`/
+`netflash` afterward. `--flash-boot`:
+
+1. **Erases every existing partition** on the card — unmounts anything the
+   host auto-mounted from it, `wipefs -a` (kills partition-table/filesystem
+   signatures), then zeroes the first 8MiB (MBR + the whole `imx-boot`/env
+   gap before `/boot`, including the env's `CONFIG_ENV_OFFSET=0x700000`) and
+   the last 1MiB (in case of a stray GPT backup header). This exists because
+   a card with old partitions left in place was observed getting one of them
+   silently auto-mounted **read-write** by the booted OS during an NFS-root
+   session — wiping first removes that landmine, and guarantees a fresh
+   (not stale-and-invalid) U-Boot environment on next boot.
+2. Writes *only* `imx-boot` (the combined SPL+ATF+OP-TEE+U-Boot-proper
+   container, machine-level — the same file regardless of which image
+   recipe you've built) at byte offset 32KiB.
+
+```
+scripts/deploy-to-network.sh --flash-boot /dev/sdX
+```
+
+That offset comes straight from this board's own `.wks` layout (`part
+u-boot --source rawcopy --sourceparams="file=imx-boot" ... --align 32`,
+i.e. `dd bs=1K seek=32`) — the same place `imx-boot` lands inside a full
+`.wic` image, just written on its own with no partition table, no `/boot`,
+no rootfs after it. With the network-first boot patch above, the board now
+tries the network automatically on every power-on and only reaches the
+U-Boot prompt if that fails too (e.g. no TFTP server reachable) — either
+way, nothing else needs to be on the card for it to come up.
+
+Safety: the script only accepts a block device path (`-b` check), refuses
+to target whatever disk backs the host's own root filesystem (checked via
+`findmnt`/`lsblk`), prints the target's `lsblk` output, and requires typing
+`YES` before it wipes/writes anything — there's no way to trigger it
+non-interactively or by accident. Still, this **unconditionally destroys all
+data** on the target device, and a wrong `/dev/sdX` is unrecoverable, so
+double-check the device node (`lsblk` before running) every time, especially
+on a machine where drive letters can shift between reboots.
 The one-time `/etc/exports` registration (`ln -sfn` + `exportfs -ra`) is
 printed, not run automatically, the first time the export is missing.
 
