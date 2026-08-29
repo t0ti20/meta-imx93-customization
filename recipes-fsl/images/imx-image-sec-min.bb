@@ -14,6 +14,11 @@ IMAGE_LINGUAS = " "
 # root access on the serial console/SSH is wanted rather than a password gate.
 IMAGE_FEATURES += "ssh-server-openssh"
 
+# gzip-compressed .wic alongside the default .wic.zst: U-Boot's netflash
+# command (see meta-imx93-customization's u-boot-imx bbappend) only has
+# gzip decompression available, no zstd CLI command.
+IMAGE_FSTYPES += "wic.gz"
+
 IMAGE_INSTALL = "packagegroup-core-boot ${CORE_IMAGE_EXTRA_INSTALL}"
 
 IMAGE_INSTALL += " \

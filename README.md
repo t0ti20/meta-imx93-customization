@@ -16,6 +16,115 @@ with the substituted 2CS/2GB DRAM chip hang during SPL DDR init. Confirmed
 fixed on real hardware (SPL → BL31 → U-Boot → Linux → systemd boots cleanly
 across repeated cycles).
 
+### Board feature: network image download-and-flash (`netflash`)
+
+`recipes-bsp/u-boot/u-boot-imx/0020-imx93_frdm-Add-network-image-flash.patch`
+adds an opt-in U-Boot env command, `netflash`, that fetches a full disk
+image over TFTP from a fixed server and raw-writes it to the SD card
+(`mmc dev 1`), starting at sector 0 — matching this board's `.wks` layout
+where `imx-boot`, the FAT `/boot` partition, and the ext4 rootfs are all
+packed into one image file.
+
+**This does NOT run automatically, and not on every boot.** Powering the
+board on and doing nothing still boots exactly as before — U-Boot's default
+autoboot (`CONFIG_BOOTCOMMAND` / `bsp_bootcmd`) is completely untouched by
+this patch, so it loads the kernel from the SD card and boots Linux the same
+way it always did. `netflash` only ever runs if a human interrupts autoboot
+at the serial console and types `run netflash` by hand. It's a one-shot,
+manual recovery/provisioning action (like re-imaging a card with `dd` from a
+PC, just over the network instead) — not a step in the normal boot chain,
+and there is nothing in this patch that would make it repeat or persist
+across boots on its own.
+
+Defaults baked in by the patch (all overridable at the U-Boot prompt with
+`setenv`, without rebuilding):
+- Board static IP: `ipaddr=192.168.1.101`, `netmask=255.255.255.0`
+- Server: `serverip=192.168.1.100`
+- File: `netflash_gz_file=imx-image-sec-min-imx93frdm.rootfs.wic.gz`
+- Scratch buffers: `netflash_comp_addr=0xA0000000` (compressed download),
+  `netflash_img_addr=0xB0000000` (decompressed image) — chosen well clear of
+  `kernel_addr_r`/`fdt_addr_r`/`splashimage`/`cntr_addr` and comfortably
+  within the board's 2GB DRAM.
+
+**Transfer format is gzip, not zstd.** Yocto's default `IMAGE_FSTYPES` for
+this machine produce `.wic.zst`, but this U-Boot build has no exposed zstd
+CLI command (`cmd/unzip.c`/`cmd/zip.c` exist for gzip; `lib/zstd/*` is
+internal-only, used for FIT images). `imx-image-sec-min.bb` adds
+`IMAGE_FSTYPES += "wic.gz"` so bitbake produces the matching
+`imx-image-sec-min-imx93frdm.rootfs.wic.gz` directly — no manual host-side
+recompression needed. Copy that file to your TFTP server's root directory.
+
+**Usage**: at the U-Boot prompt (interrupt autoboot), run:
+```
+run netflash
+```
+This only proceeds to `mmc write` if both the TFTP download and the gzip
+decompression report success — a failed/interrupted download leaves the SD
+card untouched, so a bad transfer doesn't leave the board half-flashed.
+
+**Risk**: `netflash` performs a raw write to the same SD card (`mmc dev 1`)
+the board may currently be running from. Interrupting power mid-write can
+still corrupt the card even with the download/decompress guard above (the
+guard only protects against a *failed transfer*, not a power loss during
+the write itself). Test against a spare/scratch SD card before relying on
+this against a card in active use.
+
+This is purely additive — `CONFIG_BOOTCOMMAND` and the existing
+`bsp_bootcmd`/`netboot` scripts are untouched, so normal autoboot behavior
+is unchanged. `imx-image-sec-full.bb` `require`s `imx-image-sec-min.bb`, so
+it inherits `IMAGE_FSTYPES += "wic.gz"` too — the same mechanism works for
+both images out of the box (`netflash_gz_file` only needs a `setenv` if you
+want to flash `sec-full` instead of the baked-in `sec-min` default).
+
+### Deploying to this host's TFTP/NFS servers: `scripts/deploy-to-network.sh`
+
+This host already runs `tftpd-hpa` (root `/home/khaled/Documents/Network/TFTP`,
+shared with other boards' netboot setups, e.g. the RPi4) and
+`nfs-kernel-server` (existing export `/exports/raspi4`). The script copies a
+freshly built image's artifacts into both, for two independent, opt-in
+U-Boot workflows — nothing here touches `CONFIG_BOOTCOMMAND` or autoboot:
+
+- **`run netflash`** (flash): needs the `.wic.gz` in the TFTP root. The
+  script copies it there under its real name, matching this layer's baked-in
+  `netflash_gz_file` default with no `setenv` needed for `sec-min`.
+- **`run netboot`** (live boot, no flashing — built into meta-imx-frdm's
+  board support, `root=/dev/nfs`): needs the kernel `Image` + device tree
+  over TFTP, and the rootfs over NFS. The script copies `Image` and
+  `imx93-11x11-frdm.dtb` under `TFTP_DIR/imx93/` (**not** the TFTP root —
+  other boards' netboot setups already use the generic name `Image` there,
+  so a shared top-level copy would clobber theirs), and extracts the
+  image's `.tar.zst` rootfs into a dedicated NFS export directory
+  (`/home/khaled/Documents/Network/NFS-IMX93` by default, exported as
+  `/exports/imx93`, mirroring the existing `/exports/raspi4` pattern).
+  Since `fdtfile`/`image` are shared U-Boot variables also used by the
+  normal `mmcboot` path, point them at the board only for the netboot
+  session itself, not permanently:
+  ```
+  setenv image imx93/Image
+  setenv fdtfile imx93/imx93-11x11-frdm.dtb
+  setenv serverip 192.168.1.100
+  setenv nfsroot /exports/imx93
+  run netboot
+  ```
+  (Don't `saveenv` after this unless you want net-boot-by-default — a fresh
+  power cycle reloads the compiled-in defaults either way, so skipping
+  `saveenv` keeps normal SD-card autoboot as the default.)
+
+**Usage**:
+```
+scripts/deploy-to-network.sh sec-min            # both TFTP + NFS (default image)
+scripts/deploy-to-network.sh sec-full --tftp-only
+scripts/deploy-to-network.sh --nfs-only
+```
+Reads artifacts from `tmp/deploy/images/imx93frdm/` (override via
+`DEPLOY_DIR`/`TFTP_DIR`/`NFS_DIR` env vars) — build the image first with
+`bitbake`. The NFS extraction runs `sudo rm -rf`+`tar -xp` on the export
+directory to preserve device nodes/permissions from the rootfs, so it will
+prompt for a `sudo` password; the script refuses to run against `NFS_DIR`
+values of `/`, `/home`, or `/home/khaled` as a guard against a bad override.
+The one-time `/etc/exports` registration (`ln -sfn` + `exportfs -ra`) is
+printed, not run automatically, the first time the export is missing.
+
 ### Image recipes: `recipes-fsl/images/`
 
 Two custom images for hands-on security learning/testing on this board, both
