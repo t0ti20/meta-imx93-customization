@@ -11,4 +11,5 @@ SRC_URI += " \
     file://0010-imx93_frdm-Add-2CS-2GB-DRAM-support.patch \
     file://0020-imx93_frdm-Add-network-image-flash.patch \
     file://0030-imx93_frdm-Add-network-first-boot-with-static-IP.patch \
+    file://0040-imx93_frdm-spl-Add-IMX93-CUSTOM-boot-stage-banner.patch \
 "

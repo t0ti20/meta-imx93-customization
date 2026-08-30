@@ -1,0 +1,57 @@
+From: Khaled El-Sayed <khaled.3bdulaziz@gmail.com>
+Date: Fri, 29 Aug 2026 00:00:00 +0300
+Subject: [PATCH] imx93_frdm: spl: Add IMX93-CUSTOM boot stage banner
+
+Add signature banner at SPL entry and exit, plus progress markers
+before each major init step (PMIC, DDR, M33) to aid debug visibility
+on UART during BL2.
+
+Signed-off-by: Khaled El-Sayed <khaled.3bdulaziz@gmail.com>
+---
+ board/freescale/imx93_frdm/spl.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+--- a/board/freescale/imx93_frdm/spl.c
++++ b/board/freescale/imx93_frdm/spl.c
+@@ -198,6 +198,12 @@
+
+ 	preloader_console_init();
+
++	printf("********************************************************\n");
++	printf("*  [IMX93-CUSTOM] NXP i.MX93 FRDM Security Testing Image\n");
++	printf("*  Stage   : BL2 - SPL (Secondary Program Loader)\n");
++	printf("*  Loads   : BL31 (ATF) + BL32 (OP-TEE) + BL33 (U-Boot)\n");
++	printf("********************************************************\n");
++
+ 	ret = imx9_probe_mu();
+ 	if (ret) {
+ 		printf("Fail to init ELE API\n");
+@@ -208,6 +214,7 @@
+
+ 	clock_init_late();
+
++	printf("[IMX93-CUSTOM] BL2: initializing PMIC...\n");
+ 	power_init_board();
+
+ 	if (!is_voltage_mode(VOLT_LOW_DRIVE))
+@@ -219,14 +226,21 @@
+ 	/* Setup TRDC for DDR access */
+ 	trdc_init();
+
++	printf("[IMX93-CUSTOM] BL2: initializing DDR...\n");
+ 	/* DDR initialization */
+ 	spl_dram_init();
+
++	printf("[IMX93-CUSTOM] BL2: starting M33 co-processor...\n");
+ 	/* Put M33 into CPUWAIT for following kick */
+ 	ret = m33_prepare();
+ 	if (!ret)
+ 		printf("M33 prepare ok\n");
+
++	printf("********************************************************\n");
++	printf("*  [IMX93-CUSTOM] BL2 complete\n");
++	printf("*  Handoff : loading BL31 (ATF) + BL32 (OP-TEE) + BL33 (U-Boot)\n");
++	printf("********************************************************\n");
++
+ 	board_init_r(NULL, 0);
+ }
