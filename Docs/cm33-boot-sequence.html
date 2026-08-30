@@ -1,0 +1,1027 @@
+<title>i.MX93 CM33 Boot</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+/* ── Token system ─────────────────────────────────────────────── */
+:root {
+  --bg:          #0D1117;
+  --bg-raised:   #131A26;
+  --bg-card:     #161E2E;
+  --bg-code:     #090D14;
+  --border:      #1E2D45;
+  --border-hi:   #253753;
+  --text:        #CDD9F0;
+  --text-muted:  #637A9E;
+  --text-dim:    #3D5070;
+  --accent:      #29D9C2;
+  --accent-dim:  #1A9688;
+  --warm:        #FF7043;
+  --warm-dim:    #BF4F2F;
+  --s-rom:       #9B59B6;
+  --s-spl:       #F59E0B;
+  --s-atf:       #EF4444;
+  --s-uboot:     #10B981;
+  --s-linux:     #3B82F6;
+  --shadow:      0 2px 16px rgba(0,0,0,.5);
+  --radius:      6px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:          #EFF3FB;
+    --bg-raised:   #FFFFFF;
+    --bg-card:     #F6F9FF;
+    --bg-code:     #1B2638;
+    --border:      #CBD8EE;
+    --border-hi:   #A8BDD8;
+    --text:        #1A2744;
+    --text-muted:  #5A6E90;
+    --text-dim:    #9AAAC4;
+    --accent:      #0098A0;
+    --accent-dim:  #007880;
+    --warm:        #D84315;
+    --warm-dim:    #BF360C;
+    --s-rom:       #7B3FAE;
+    --s-spl:       #D97706;
+    --s-atf:       #DC2626;
+    --s-uboot:     #059669;
+    --s-linux:     #2563EB;
+    --shadow:      0 2px 12px rgba(0,30,80,.1);
+  }
+}
+:root[data-theme="dark"] {
+  --bg:          #0D1117;
+  --bg-raised:   #131A26;
+  --bg-card:     #161E2E;
+  --bg-code:     #090D14;
+  --border:      #1E2D45;
+  --border-hi:   #253753;
+  --text:        #CDD9F0;
+  --text-muted:  #637A9E;
+  --text-dim:    #3D5070;
+  --accent:      #29D9C2;
+  --accent-dim:  #1A9688;
+  --warm:        #FF7043;
+  --warm-dim:    #BF4F2F;
+  --s-rom:       #9B59B6;
+  --s-spl:       #F59E0B;
+  --s-atf:       #EF4444;
+  --s-uboot:     #10B981;
+  --s-linux:     #3B82F6;
+  --shadow:      0 2px 16px rgba(0,0,0,.5);
+}
+:root[data-theme="light"] {
+  --bg:          #EFF3FB;
+  --bg-raised:   #FFFFFF;
+  --bg-card:     #F6F9FF;
+  --bg-code:     #1B2638;
+  --border:      #CBD8EE;
+  --border-hi:   #A8BDD8;
+  --text:        #1A2744;
+  --text-muted:  #5A6E90;
+  --text-dim:    #9AAAC4;
+  --accent:      #0098A0;
+  --accent-dim:  #007880;
+  --warm:        #D84315;
+  --warm-dim:    #BF360C;
+  --s-rom:       #7B3FAE;
+  --s-spl:       #D97706;
+  --s-atf:       #DC2626;
+  --s-uboot:     #059669;
+  --s-linux:     #2563EB;
+  --shadow:      0 2px 12px rgba(0,30,80,.1);
+}
+
+/* ── Reset & base ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.7;
+  min-height: 100vh;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Typography ────────────────────────────────────────────────── */
+h1, h2, h3, h4, .mono-label {
+  font-family: 'Space Mono', monospace;
+}
+h1 { font-size: clamp(1.4rem, 4vw, 2.1rem); font-weight: 700; line-height: 1.2; letter-spacing: -.02em; }
+h2 { font-size: 1.15rem; font-weight: 700; letter-spacing: -.01em; margin-bottom: .75rem; text-wrap: balance; }
+h3 { font-size: .92rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); margin-bottom: .5rem; }
+p  { max-width: 68ch; }
+p + p { margin-top: .75rem; }
+code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: .83em;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  padding: .1em .35em;
+  border-radius: 3px;
+  color: var(--accent);
+}
+pre {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: .82rem;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+  overflow-x: auto;
+  line-height: 1.6;
+  color: var(--text);
+  tab-size: 4;
+}
+pre .c  { color: var(--text-dim); }
+pre .kw { color: var(--warm); }
+pre .fn { color: var(--accent); }
+pre .addr { color: #A78BFA; font-weight: 500; }
+pre .num { color: #F59E0B; }
+pre .str { color: #86EFAC; }
+pre .cm { color: var(--s-linux); }
+
+/* ── Layout containers ─────────────────────────────────────────── */
+.page-wrap { max-width: 1000px; margin: 0 auto; padding: 0 1.5rem 6rem; }
+
+/* ── Sticky header ─────────────────────────────────────────────── */
+.site-header {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: .65rem 1.5rem;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem;
+  backdrop-filter: blur(8px);
+}
+.header-title {
+  font-family: 'Space Mono', monospace;
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+  letter-spacing: .05em;
+}
+.header-title span { color: var(--accent); }
+.stage-nav {
+  display: flex; gap: .35rem; flex-wrap: wrap;
+}
+.stage-pill {
+  font-family: 'Space Mono', monospace;
+  font-size: .68rem;
+  font-weight: 700;
+  padding: .2em .6em;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: opacity .15s, transform .1s;
+  text-decoration: none;
+  letter-spacing: .04em;
+}
+.stage-pill:hover { opacity: .85; transform: translateY(-1px); text-decoration: none; }
+.pill-rom   { background: color-mix(in srgb, var(--s-rom) 18%, transparent);   border-color: var(--s-rom);   color: var(--s-rom); }
+.pill-spl   { background: color-mix(in srgb, var(--s-spl) 18%, transparent);   border-color: var(--s-spl);   color: var(--s-spl); }
+.pill-atf   { background: color-mix(in srgb, var(--s-atf) 18%, transparent);   border-color: var(--s-atf);   color: var(--s-atf); }
+.pill-uboot { background: color-mix(in srgb, var(--s-uboot) 18%, transparent); border-color: var(--s-uboot); color: var(--s-uboot); }
+.pill-linux { background: color-mix(in srgb, var(--s-linux) 18%, transparent); border-color: var(--s-linux); color: var(--s-linux); }
+
+/* theme toggle */
+.theme-toggle {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: .75rem;
+  padding: .25em .6em;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.theme-toggle:hover { color: var(--text); border-color: var(--border-hi); }
+
+/* ── Hero ──────────────────────────────────────────────────────── */
+.hero {
+  padding: 3rem 0 2.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3rem;
+}
+.hero-eyebrow {
+  font-family: 'Space Mono', monospace;
+  font-size: .72rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: .7rem;
+}
+.hero h1 { margin-bottom: .9rem; }
+.hero-sub {
+  color: var(--text-muted);
+  font-size: .95rem;
+  font-weight: 300;
+  max-width: 62ch;
+  line-height: 1.65;
+}
+.hero-meta {
+  margin-top: 1.5rem;
+  display: flex; gap: 1.5rem; flex-wrap: wrap;
+  font-family: 'Space Mono', monospace;
+  font-size: .7rem;
+  color: var(--text-dim);
+  letter-spacing: .05em;
+}
+.hero-meta span { color: var(--text-muted); }
+
+/* ── M33 state indicator strip ─────────────────────────────────── */
+.state-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: .5rem;
+  margin-bottom: 3rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+.state-cell { text-align: center; }
+.state-stage {
+  font-family: 'Space Mono', monospace;
+  font-size: .62rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: .4rem;
+}
+.state-badge {
+  font-family: 'Space Mono', monospace;
+  font-size: .7rem;
+  padding: .25em .6em;
+  border-radius: 3px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.state-held    { background: rgba(107,114,128,.15); border: 1px solid #4B5563; color: #9CA3AF; }
+.state-idle    { background: color-mix(in srgb, var(--s-spl) 15%, transparent); border: 1px solid var(--s-spl); color: var(--s-spl); }
+.state-smc     { background: color-mix(in srgb, var(--s-atf) 15%, transparent); border: 1px solid var(--s-atf); color: var(--s-atf); }
+.state-running { background: color-mix(in srgb, var(--s-uboot) 15%, transparent); border: 1px solid var(--s-uboot); color: var(--s-uboot); }
+.state-rproc   { background: color-mix(in srgb, var(--s-linux) 15%, transparent); border: 1px solid var(--s-linux); color: var(--s-linux); }
+@media (max-width: 600px) {
+  .state-strip { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── Section ───────────────────────────────────────────────────── */
+.section { margin-bottom: 3.5rem; }
+.section-header {
+  display: flex; align-items: baseline; gap: .75rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--border);
+}
+.section-header h2 { margin-bottom: 0; }
+.section-tag {
+  font-family: 'Space Mono', monospace;
+  font-size: .65rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* ── Tables ────────────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; border-radius: var(--radius); border: 1px solid var(--border); }
+table {
+  width: 100%; border-collapse: collapse;
+  font-size: .83rem;
+}
+thead th {
+  background: var(--bg-card);
+  font-family: 'Space Mono', monospace;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: .65rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+tbody tr { border-bottom: 1px solid var(--border); }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--bg-card); }
+td {
+  padding: .6rem 1rem;
+  vertical-align: top;
+  font-variant-numeric: tabular-nums;
+}
+td.addr-col, td.reg-col {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: .8rem;
+  color: #A78BFA;
+  white-space: nowrap;
+}
+td.size-col {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: .8rem;
+  color: var(--s-spl);
+  white-space: nowrap;
+}
+td.name-col {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: .8rem;
+  color: var(--accent);
+  white-space: nowrap;
+}
+td.desc-col { color: var(--text-muted); font-size: .82rem; }
+
+/* ── Boot Timeline ─────────────────────────────────────────────── */
+.boot-timeline { position: relative; padding-left: 3rem; }
+.boot-timeline::before {
+  content: '';
+  position: absolute; left: 1.1rem; top: 1.5rem; bottom: 1.5rem;
+  width: 2px;
+  background: linear-gradient(to bottom,
+    var(--s-rom) 0%,
+    var(--s-spl) 25%,
+    var(--s-atf) 50%,
+    var(--s-uboot) 75%,
+    var(--s-linux) 100%);
+  opacity: .35;
+}
+.stage-block {
+  position: relative;
+  margin-bottom: 2.5rem;
+}
+.stage-block:last-child { margin-bottom: 0; }
+.stage-node {
+  position: absolute;
+  left: -2.45rem;
+  top: .25rem;
+  width: 1.4rem; height: 1.4rem;
+  border-radius: 50%;
+  border: 2px solid;
+  display: flex; align-items: center; justify-content: center;
+  transition: box-shadow .2s, transform .15s;
+  cursor: default;
+}
+.stage-block:hover .stage-node {
+  transform: scale(1.15);
+}
+.stage-node.rom   { border-color: var(--s-rom);   background: color-mix(in srgb, var(--s-rom) 20%, var(--bg)); }
+.stage-node.spl   { border-color: var(--s-spl);   background: color-mix(in srgb, var(--s-spl) 20%, var(--bg)); }
+.stage-node.atf   { border-color: var(--s-atf);   background: color-mix(in srgb, var(--s-atf) 20%, var(--bg)); }
+.stage-node.uboot { border-color: var(--s-uboot); background: color-mix(in srgb, var(--s-uboot) 20%, var(--bg)); }
+.stage-node.linux { border-color: var(--s-linux); background: color-mix(in srgb, var(--s-linux) 20%, var(--bg)); }
+.stage-block:hover .stage-node.rom   { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--s-rom) 50%, transparent); }
+.stage-block:hover .stage-node.spl   { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--s-spl) 50%, transparent); }
+.stage-block:hover .stage-node.atf   { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--s-atf) 50%, transparent); }
+.stage-block:hover .stage-node.uboot { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--s-uboot) 50%, transparent); }
+.stage-block:hover .stage-node.linux { box-shadow: 0 0 10px 2px color-mix(in srgb, var(--s-linux) 50%, transparent); }
+.stage-dot { width: .45rem; height: .45rem; border-radius: 50%; }
+.stage-dot.rom   { background: var(--s-rom); }
+.stage-dot.spl   { background: var(--s-spl); }
+.stage-dot.atf   { background: var(--s-atf); }
+.stage-dot.uboot { background: var(--s-uboot); }
+.stage-dot.linux { background: var(--s-linux); }
+
+.stage-head {
+  display: flex; align-items: center; gap: .7rem;
+  margin-bottom: .75rem; flex-wrap: wrap;
+}
+.stage-label {
+  font-family: 'Space Mono', monospace;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: .15em .55em;
+  border-radius: 3px;
+  border: 1px solid;
+}
+.stage-label.rom   { border-color: var(--s-rom);   color: var(--s-rom);   background: color-mix(in srgb, var(--s-rom) 12%, transparent); }
+.stage-label.spl   { border-color: var(--s-spl);   color: var(--s-spl);   background: color-mix(in srgb, var(--s-spl) 12%, transparent); }
+.stage-label.atf   { border-color: var(--s-atf);   color: var(--s-atf);   background: color-mix(in srgb, var(--s-atf) 12%, transparent); }
+.stage-label.uboot { border-color: var(--s-uboot); color: var(--s-uboot); background: color-mix(in srgb, var(--s-uboot) 12%, transparent); }
+.stage-label.linux { border-color: var(--s-linux); color: var(--s-linux); background: color-mix(in srgb, var(--s-linux) 12%, transparent); }
+.stage-title {
+  font-family: 'Space Mono', monospace;
+  font-size: .92rem;
+  font-weight: 700;
+}
+.stage-exc-level {
+  font-family: 'Space Mono', monospace;
+  font-size: .65rem;
+  color: var(--text-dim);
+  letter-spacing: .06em;
+}
+.stage-body { color: var(--text-muted); font-size: .88rem; }
+.stage-body p { max-width: 72ch; margin-bottom: .5rem; }
+.step-list {
+  list-style: none;
+  margin: .75rem 0;
+  display: flex; flex-direction: column; gap: .35rem;
+}
+.step-list li {
+  display: flex; gap: .7rem; align-items: flex-start;
+  font-size: .85rem;
+  color: var(--text);
+}
+.step-num {
+  font-family: 'Space Mono', monospace;
+  font-size: .65rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  min-width: 1.4rem;
+  padding-top: .15rem;
+  letter-spacing: .04em;
+}
+.stage-ref {
+  margin-top: .75rem;
+  padding: .6rem .85rem;
+  background: var(--bg-card);
+  border-left: 2px solid var(--border-hi);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: .75rem;
+  color: var(--text-dim);
+  display: flex; flex-direction: column; gap: .2rem;
+}
+.stage-ref .ref-file { color: var(--text-muted); }
+.stage-ref .ref-sym  { color: var(--accent); }
+
+/* ── M33 state callout ─────────────────────────────────────────── */
+.m33-state {
+  display: inline-flex; align-items: center; gap: .4rem;
+  margin-top: .5rem;
+  font-family: 'Space Mono', monospace;
+  font-size: .7rem;
+  padding: .25em .75em;
+  border-radius: 3px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.m33-state.held    { background: rgba(75,85,99,.2);  border: 1px solid #4B5563; color: #9CA3AF; }
+.m33-state.idle    { background: color-mix(in srgb, var(--s-spl) 15%, transparent); border: 1px solid var(--s-spl); color: var(--s-spl); }
+.m33-state.running { background: color-mix(in srgb, var(--s-uboot) 15%, transparent); border: 1px solid var(--s-uboot); color: var(--s-uboot); }
+.m33-state-dot { width: .45rem; height: .45rem; border-radius: 50%; }
+.m33-state.held .m33-state-dot    { background: #6B7280; }
+.m33-state.idle .m33-state-dot    { background: var(--s-spl); animation: blink 1.6s ease-in-out infinite; }
+.m33-state.running .m33-state-dot { background: var(--s-uboot); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+@keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(1.3)} }
+@media (prefers-reduced-motion: reduce) {
+  .m33-state-dot { animation: none !important; }
+  .stage-node { transition: none; }
+}
+
+/* ── SMC table ─────────────────────────────────────────────────── */
+.smc-grid {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: .83rem;
+}
+.smc-header {
+  display: contents;
+}
+.smc-header > div {
+  background: var(--bg-card);
+  font-family: 'Space Mono', monospace;
+  font-size: .65rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: .6rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.smc-row { display: contents; }
+.smc-row > div {
+  padding: .6rem 1rem;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+}
+.smc-row:last-child > div { border-bottom: none; }
+.smc-row:hover > div { background: var(--bg-card); }
+.smc-id   { font-family: 'IBM Plex Mono', monospace; color: #A78BFA; white-space: nowrap; }
+.smc-name { font-family: 'IBM Plex Mono', monospace; color: var(--accent); white-space: nowrap; }
+.smc-desc { color: var(--text-muted); font-size: .82rem; }
+
+/* ── Info callout ──────────────────────────────────────────────── */
+.callout {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: .85rem 1.1rem;
+  font-size: .85rem;
+  color: var(--text-muted);
+  margin: 1rem 0;
+  max-width: 72ch;
+}
+.callout strong { color: var(--text); }
+.callout.warn { border-left-color: var(--warm); }
+.callout.warn strong { color: var(--warm); }
+
+/* ── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .site-header { flex-direction: column; align-items: flex-start; gap: .5rem; }
+  .boot-timeline { padding-left: 2.25rem; }
+  .stage-node { left: -1.75rem; }
+  .boot-timeline::before { left: .65rem; }
+}
+</style>
+
+<!-- ── HEADER ───────────────────────────────────────────────── -->
+<header class="site-header">
+  <div class="header-title">NXP i.MX93 · <span>CM33 Boot Sequence</span></div>
+  <nav class="stage-nav" aria-label="Boot stages">
+    <a class="stage-pill pill-rom"   href="#stage-rom">ROM</a>
+    <a class="stage-pill pill-spl"   href="#stage-spl">BL2 · SPL</a>
+    <a class="stage-pill pill-atf"   href="#stage-atf">BL31 · ATF</a>
+    <a class="stage-pill pill-uboot" href="#stage-uboot">BL33 · U-Boot</a>
+    <a class="stage-pill pill-linux" href="#stage-linux">Linux</a>
+  </nav>
+  <button class="theme-toggle" onclick="cycleTheme()" aria-label="Toggle theme">◑</button>
+</header>
+
+<!-- ── CONTENT ──────────────────────────────────────────────── -->
+<div class="page-wrap">
+
+  <!-- Hero -->
+  <section class="hero" aria-labelledby="hero-h1">
+    <div class="hero-eyebrow">Cortex-M33 · i.MX93 FRDM · Boot Reference</div>
+    <h1 id="hero-h1">How the CM33<br>comes to life</h1>
+    <p class="hero-sub">
+      The Cortex-M33 on i.MX93 is not self-starting. Its journey from a hardware-held
+      CPUWAIT state to executing firmware involves five distinct actors — ROM, SPL, ATF,
+      U-Boot, and Linux — each doing a narrowly scoped piece of the work.
+    </p>
+    <div class="hero-meta">
+      SoC: <span>NXP i.MX93</span>
+      &nbsp;·&nbsp; M33 arch: <span>ARMv8-M / TrustZone-M</span>
+      &nbsp;·&nbsp; Boot stack: <span>SPL → ATF BL31 → U-Boot → Linux</span>
+      &nbsp;·&nbsp; SMC fn: <span>0xC2000005</span>
+    </div>
+  </section>
+
+  <!-- M33 State strip -->
+  <div class="state-strip" role="table" aria-label="M33 state at each boot stage">
+    <div class="state-cell" role="row">
+      <div class="state-stage" style="color:var(--s-rom)">ROM</div>
+      <div class="state-badge state-held">CPUWAIT=1</div>
+    </div>
+    <div class="state-cell" role="row">
+      <div class="state-stage" style="color:var(--s-spl)">SPL / BL2</div>
+      <div class="state-badge state-idle">Reset released<br>CPUWAIT=1</div>
+    </div>
+    <div class="state-cell" role="row">
+      <div class="state-stage" style="color:var(--s-atf)">ATF / BL31</div>
+      <div class="state-badge state-smc">SMC kick<br>CPUWAIT→0</div>
+    </div>
+    <div class="state-cell" role="row">
+      <div class="state-stage" style="color:var(--s-uboot)">U-Boot</div>
+      <div class="state-badge state-running">RUNNING<br>(optional)</div>
+    </div>
+    <div class="state-cell" role="row">
+      <div class="state-stage" style="color:var(--s-linux)">Linux</div>
+      <div class="state-badge state-rproc">remoteproc<br>managed</div>
+    </div>
+  </div>
+
+  <!-- ── MEMORY MAP ─────────────────────────────────────────── -->
+  <section class="section" id="memory-map" aria-labelledby="mm-h2">
+    <div class="section-header">
+      <h2 id="mm-h2">Memory Map</h2>
+      <span class="section-tag">TCM · DDR · RPMsg</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Region</th>
+            <th>A55 System Addr</th>
+            <th>M33 Local Addr</th>
+            <th>Size</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name-col">TCML (secure)</td>
+            <td class="addr-col">0x201C0000</td>
+            <td class="addr-col">0x1FFC0000</td>
+            <td class="size-col">128 KB</td>
+            <td class="desc-col">M33 code (secure alias). Reset vector at +0x1C0000.</td>
+          </tr>
+          <tr>
+            <td class="name-col">TCML (non-secure)</td>
+            <td class="addr-col">0x201C0000</td>
+            <td class="addr-col">0x0FFC0000</td>
+            <td class="size-col">128 KB</td>
+            <td class="desc-col">M33 code (non-secure alias). U-Boot <code>bootaux</code> default.</td>
+          </tr>
+          <tr>
+            <td class="name-col">TCML ECC clear</td>
+            <td class="addr-col">0x201E0000</td>
+            <td class="addr-col">—</td>
+            <td class="size-col">256 KB</td>
+            <td class="desc-col">Cleared by A55 in SPL <code>m33_prepare()</code> to init ECC bits before M33 fetches code.</td>
+          </tr>
+          <tr>
+            <td class="name-col">TCMU (secure)</td>
+            <td class="addr-col">0x20200000</td>
+            <td class="addr-col">0x30000000</td>
+            <td class="size-col">256 KB</td>
+            <td class="desc-col">M33 data / stack (secure alias).</td>
+          </tr>
+          <tr>
+            <td class="name-col">TCMU (non-secure)</td>
+            <td class="addr-col">0x20200000</td>
+            <td class="addr-col">0x20000000</td>
+            <td class="size-col">256 KB</td>
+            <td class="desc-col">M33 data / stack (non-secure alias). Resource table at 0x2021E000.</td>
+          </tr>
+          <tr>
+            <td class="name-col">rsc_table</td>
+            <td class="addr-col">0x2021E000</td>
+            <td class="addr-col">—</td>
+            <td class="size-col">4 KB</td>
+            <td class="desc-col">Linux remoteproc resource table — vring locations and config.</td>
+          </tr>
+          <tr>
+            <td class="name-col">DDR (M33 usable)</td>
+            <td class="addr-col">0x80000000</td>
+            <td class="addr-col">0x80000000</td>
+            <td class="size-col">256 MB</td>
+            <td class="desc-col">General DDR. RPMsg shared buffers carved out here.</td>
+          </tr>
+          <tr>
+            <td class="name-col">vdev0vring0</td>
+            <td class="addr-col">0xA4000000</td>
+            <td class="addr-col">—</td>
+            <td class="size-col">32 KB</td>
+            <td class="desc-col">RPMsg virtio ring — A55→M33 TX channel 0.</td>
+          </tr>
+          <tr>
+            <td class="name-col">vdev0vring1</td>
+            <td class="addr-col">0xA4008000</td>
+            <td class="addr-col">—</td>
+            <td class="size-col">32 KB</td>
+            <td class="desc-col">RPMsg virtio ring — M33→A55 RX channel 0.</td>
+          </tr>
+          <tr>
+            <td class="name-col">vdev1vring0/1</td>
+            <td class="addr-col">0xA4010000</td>
+            <td class="addr-col">—</td>
+            <td class="size-col">2 × 32 KB</td>
+            <td class="desc-col">RPMsg virtio ring pair — channel 1 (SOF audio).</td>
+          </tr>
+          <tr>
+            <td class="name-col">vdevbuffer</td>
+            <td class="addr-col">0xA4020000</td>
+            <td class="addr-col">—</td>
+            <td class="size-col">1 MB</td>
+            <td class="desc-col">RPMsg payload buffer pool shared between both channels.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── REGISTER REFERENCE ────────────────────────────────── -->
+  <section class="section" id="registers" aria-labelledby="reg-h2">
+    <div class="section-header">
+      <h2 id="reg-h2">Key Registers</h2>
+      <span class="section-tag">SRC · BLK_CTL · GIC</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Register</th>
+            <th>Address</th>
+            <th>Bit(s)</th>
+            <th>What it controls</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="name-col">SRC_GLOBAL_SCR</td>
+            <td class="addr-col">0x44460010</td>
+            <td class="desc-col">[0]</td>
+            <td class="desc-col"><strong>Release M33 reset.</strong> Write 1 in <code>m33_prepare()</code> to deassert hardware reset. M33 is held in CPUWAIT after this.</td>
+          </tr>
+          <tr>
+            <td class="name-col">SRC_M33P_FUNC_STAT</td>
+            <td class="addr-col">0x444628B4</td>
+            <td class="desc-col">RST_STAT</td>
+            <td class="desc-col">Polled after SCR write. Set = reset successfully released. <code>m33_prepare()</code> waits on this.</td>
+          </tr>
+          <tr>
+            <td class="name-col">SRC_GLOBAL_GPR9</td>
+            <td class="addr-col">0x4446009C</td>
+            <td class="desc-col">[31:0]</td>
+            <td class="desc-col"><strong>M33 boot address.</strong> Written by ATF SMC handler before clearing CPUWAIT. M33 reads its reset vector from this address.</td>
+          </tr>
+          <tr>
+            <td class="name-col">M33_INITSVTOR</td>
+            <td class="addr-col">0x444F005C</td>
+            <td class="desc-col">[31:7]</td>
+            <td class="desc-col">Secure vector table offset. ATF writes 0 here before kick to clear any ROM override.</td>
+          </tr>
+          <tr>
+            <td class="name-col">M33_CFG</td>
+            <td class="addr-col">0x444F0060</td>
+            <td class="desc-col">[2]</td>
+            <td class="desc-col"><strong>CPUWAIT.</strong> While set, M33 is halted at reset. ATF SMC handler clears this bit to start execution. Also used by <code>m33_is_rom_kicked()</code> to detect ROM-kicked path.</td>
+          </tr>
+          <tr>
+            <td class="name-col">CA55_IRQ_MASK[1]</td>
+            <td class="addr-col">BLK_CTRL_S</td>
+            <td class="desc-col">[6]</td>
+            <td class="desc-col">Masks WDOG1 IRQ at A55 GIC. Set in <code>m33_prepare()</code> — WDOG1 is reserved for M33 reset recovery.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── SMC Interface ─────────────────────────────────────── -->
+  <section class="section" id="smc" aria-labelledby="smc-h2">
+    <div class="section-header">
+      <h2 id="smc-h2">ATF SMC Interface</h2>
+      <span class="section-tag">IMX_SIP_SRC · EL3 → M33</span>
+    </div>
+    <p style="color:var(--text-muted);font-size:.88rem;margin-bottom:1rem;max-width:68ch">
+      All CPUWAIT manipulation is gated behind an EL3 Secure Monitor Call. Neither U-Boot nor
+      Linux can touch <code>M33_CFG</code> directly — they must go through ATF's
+      <code>imx_src_handler()</code> in <code>plat/imx/imx93/src.c</code>.
+    </p>
+    <div style="margin-bottom:.75rem">
+      <code style="font-size:.82rem">arm_smccc_smc(0xC2000005, x1, boot_addr, 0, ...)</code>
+    </div>
+    <div class="smc-grid">
+      <div class="smc-header">
+        <div>x1 (function)</div>
+        <div>Name</div>
+        <div>Action</div>
+      </div>
+      <div class="smc-row">
+        <div class="smc-id">0x00</div>
+        <div class="smc-name">M4_START</div>
+        <div class="smc-desc">Write 0→INITSVTOR, write x2→GPR9, clear CPUWAIT bit in M33_CFG. M33 begins executing.</div>
+      </div>
+      <div class="smc-row">
+        <div class="smc-id">0x01</div>
+        <div class="smc-name">M4_STARTED</div>
+        <div class="smc-desc">Returns non-zero if CPUWAIT is already clear — query whether M33 is running without starting it.</div>
+      </div>
+      <div class="smc-row">
+        <div class="smc-id">0x02</div>
+        <div class="smc-name">M4_STOP</div>
+        <div class="smc-desc">Quiesce M33: triggers WDOG1 reset path, then re-asserts SRC reset. Safe for live firmware teardown.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── BOOT TIMELINE ─────────────────────────────────────── -->
+  <section class="section" id="boot-stages" aria-labelledby="tl-h2">
+    <div class="section-header">
+      <h2 id="tl-h2">Boot Stages</h2>
+      <span class="section-tag">5 actors · 1 M33</span>
+    </div>
+
+    <div class="boot-timeline">
+
+      <!-- ROM -->
+      <div class="stage-block" id="stage-rom">
+        <div class="stage-node rom" aria-hidden="true"><div class="stage-dot rom"></div></div>
+        <div class="stage-head">
+          <span class="stage-label rom">ROM · BL1</span>
+          <span class="stage-title">Silicon ROM</span>
+          <span class="stage-exc-level">EL3 · fixed in silicon</span>
+        </div>
+        <div class="stage-body">
+          <p>On power-on the hardware holds the CM33 in CPUWAIT via <code>M33_CFG[2]</code>. The A55 ROM reads boot straps and looks for a signed boot container on the boot device.</p>
+          <p>If the container includes an M33 image at a known offset, ROM may optionally kick the CM33 itself — this is the <em>ROM-kicked</em> path. On normal eMMC/SD boot this does not happen; ROM boots the A55 SPL and leaves M33 halted.</p>
+          <div class="m33-state held"><div class="m33-state-dot"></div>M33: CPUWAIT = 1 · halted</div>
+        </div>
+      </div>
+
+      <!-- SPL -->
+      <div class="stage-block" id="stage-spl">
+        <div class="stage-node spl" aria-hidden="true"><div class="stage-dot spl"></div></div>
+        <div class="stage-head">
+          <span class="stage-label spl">BL2 · SPL</span>
+          <span class="stage-title">Secondary Program Loader</span>
+          <span class="stage-exc-level">EL3 · u-boot SPL</span>
+        </div>
+        <div class="stage-body">
+          <p><code>board_init_f()</code> calls <code>m33_prepare()</code> near the end of its init sequence — after DDR is up, PMIC configured, and M33 co-processor clock enabled.
+          This function does <em>not</em> start M33</em>; it only makes TCM safe to use.</p>
+          <ol class="step-list">
+            <li><span class="step-num">01</span><span>Guard: <code>m33_is_rom_kicked()</code> reads <code>M33_CFG[2]</code> (0x444F0060) — if already clear, ROM ran M33, skip prepare and return <code>-EPERM</code>.</span></li>
+            <li><span class="step-num">02</span><span>Release M33 hardware reset: <code>setbits_le32(&amp;SRC_GLOBAL_SCR, BIT(0))</code> at 0x44460010.</span></li>
+            <li><span class="step-num">03</span><span>Poll <code>SRC_M33P_FUNC_STAT</code> (0x444628B4) until <code>RST_STAT</code> is set — confirms reset deasserted.</span></li>
+            <li><span class="step-num">04</span><span>ELE tamper route release: <code>ele_release_m33_trout()</code> — sends <code>ELE_ENABLE_RTC_REQ</code> via MU to EdgeLock Enclave. Required for M33 to pass its internal security check.</span></li>
+            <li><span class="step-num">05</span><span>Mask WDOG1 IRQ at A55 GIC (<code>CA55_IRQ_MASK[1][6]</code>) — WDOG1 is reserved for M33 reset recovery, A55 must not handle it.</span></li>
+            <li><span class="step-num">06</span><span>Enable WDOG1 clock: <code>ccm_lpcg_on(CCGR_WDG1, 1)</code>.</span></li>
+            <li><span class="step-num">07</span><span>ELE LP handshake: set <code>lp_handshake[0][6]</code> for M33 reset coordination during low-power transitions.</span></li>
+            <li><span class="step-num">08</span><span>TRDC reconfig (OSCCA builds): <code>trdc_mbc_blk_config(0x44270000, ...)</code> opens MBC1 blocks 0 and 1 for TCM access.</span></li>
+            <li><span class="step-num">09</span><span><strong>TCM ECC init:</strong> <code>memset(0x201E0000, 0, 0x40000)</code> — A55 clears 256 KB of TCML to initialize ECC bits. Without this, M33's first code fetch triggers an ECC error.</span></li>
+          </ol>
+          <div class="stage-ref">
+            <span class="ref-file">arch/arm/mach-imx/imx9/native/soc.c</span>
+            <span class="ref-sym">m33_prepare() · m33_is_rom_kicked()</span>
+            <span class="ref-file">board/freescale/imx93_frdm/spl.c</span>
+            <span class="ref-sym">board_init_f() → m33_prepare()</span>
+          </div>
+          <div class="m33-state idle"><div class="m33-state-dot"></div>M33: reset released · CPUWAIT = 1 · TCM clean · not executing</div>
+        </div>
+      </div>
+
+      <!-- ATF -->
+      <div class="stage-block" id="stage-atf">
+        <div class="stage-node atf" aria-hidden="true"><div class="stage-dot atf"></div></div>
+        <div class="stage-head">
+          <span class="stage-label atf">BL31 · ATF</span>
+          <span class="stage-title">EL3 Runtime Firmware</span>
+          <span class="stage-exc-level">EL3 · secure monitor</span>
+        </div>
+        <div class="stage-body">
+          <p>ATF installs a permanent Secure Monitor Call handler for the M33 lifecycle. No software outside EL3 can write <code>M33_CFG</code> directly — every kick goes through this handler.</p>
+          <p>When called with <code>x1 = 0x00</code> (START), the handler executes:</p>
+          <ol class="step-list">
+            <li><span class="step-num">01</span><span>Write <code>0</code> → <code>M33_INITSVTOR</code> (0x444F005C) — clears any ROM-set secure vector override.</span></li>
+            <li><span class="step-num">02</span><span>Write boot address → <code>SRC_GLOBAL_GPR9</code> (0x4446009C). If caller passes <code>x2 = 0</code>, writes <code>0x0FFE0000</code> (TCML non-secure base from M33's view).</span></li>
+            <li><span class="step-num">03</span><span><strong>Clear <code>M33_CFG[2]</code></strong> (0x444F0060) — this releases CPUWAIT. The CM33 pipeline unfreezes and begins fetching from the reset vector.</span></li>
+          </ol>
+          <div class="stage-ref">
+            <span class="ref-file">plat/imx/imx93/src.c</span>
+            <span class="ref-sym">imx_src_handler() — handles IMX_SIP_SRC (0xC2000005)</span>
+            <span class="ref-file">plat/imx/imx93/imx93_bl31_setup.c</span>
+            <span class="ref-sym">bl31_platform_setup() — SMC handler registered here</span>
+          </div>
+          <div class="m33-state running"><div class="m33-state-dot"></div>M33: CPUWAIT = 0 · executing from reset vector</div>
+        </div>
+      </div>
+
+      <!-- U-Boot -->
+      <div class="stage-block" id="stage-uboot">
+        <div class="stage-node uboot" aria-hidden="true"><div class="stage-dot uboot"></div></div>
+        <div class="stage-head">
+          <span class="stage-label uboot">BL33 · U-Boot</span>
+          <span class="stage-title">Bootloader (optional M33 use)</span>
+          <span class="stage-exc-level">EL2 / EL1 · non-secure</span>
+        </div>
+        <div class="stage-body">
+          <p>U-Boot provides two commands for manually loading and starting M33 firmware from the boot environment. Both ultimately issue the same ATF SMC call.</p>
+          <ol class="step-list">
+            <li><span class="step-num">—</span><span><code>bootaux &lt;addr&gt; [core]</code> — non-secure path. Copies binary to TCM via A55 memcpy, then calls <code>arch_auxiliary_core_up(0, addr)</code> → SMC START.</span></li>
+            <li><span class="step-num">—</span><span><code>bootaux_cntr &lt;addr&gt; [core]</code> — AHAB authenticated path. Validates NXP container signature before copy, then same SMC kick.</span></li>
+            <li><span class="step-num">—</span><span><code>stopaux [core]</code> — issues SMC STOP (0x02) to quiesce M33 via WDOG1 reset path.</span></li>
+          </ol>
+          <div class="callout">
+            <strong>Address space note:</strong> the address passed to <code>bootaux</code> is in M33's local view.
+            TCML non-secure base = <code>0x0FFE0000</code>, TCML secure base = <code>0x1FFE0000</code>.
+            Load a firmware ELF from FAT/ext4 with <code>fatload</code> first, then <code>bootaux $loadaddr</code>.
+          </div>
+          <div class="stage-ref">
+            <span class="ref-file">arch/arm/mach-imx/imx9/imx_bootaux.c</span>
+            <span class="ref-sym">do_bootaux() · arch_auxiliary_core_up()</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Linux -->
+      <div class="stage-block" id="stage-linux">
+        <div class="stage-node linux" aria-hidden="true"><div class="stage-dot linux"></div></div>
+        <div class="stage-head">
+          <span class="stage-label linux">Linux</span>
+          <span class="stage-title">remoteproc + RPMsg</span>
+          <span class="stage-exc-level">EL1 · non-secure</span>
+        </div>
+        <div class="stage-body">
+          <p>The Linux remoteproc framework manages the full M33 lifecycle at runtime: load firmware, kick core, exchange messages, and stop/restart. The driver uses the same ATF SMC path — it never writes hardware registers directly.</p>
+          <ol class="step-list">
+            <li><span class="step-num">01</span><span>Driver match: <code>fsl,imx93-cm33</code> (compatible string in <code>imx93.dtsi</code>). Method flag <code>IMX_RPROC_SMC</code> selected at probe.</span></li>
+            <li><span class="step-num">02</span><span><code>request_firmware()</code> → loads ELF from <code>/lib/firmware/imx/</code> (Zephyr demo or SOF).</span></li>
+            <li><span class="step-num">03</span><span>Parse ELF resource table at <code>0x2021E000</code> — discovers vring locations, memory carveouts, RPMsg channels.</span></li>
+            <li><span class="step-num">04</span><span>Copy ELF segments to TCM / DDR per resource table PT_LOAD entries.</span></li>
+            <li><span class="step-num">05</span><span>Call <code>arm_smccc_smc(0xC2000005, 0x00, boot_addr, 0, ...)</code> → ATF clears CPUWAIT.</span></li>
+            <li><span class="step-num">06</span><span>Wait <code>fsl,startup-delay-ms = 500</code> ms for M33 to write its resource table announcement.</span></li>
+            <li><span class="step-num">07</span><span>RPMsg virtio transport comes up over MU1 mailboxes. Userspace sees <code>/dev/rpmsg*</code> endpoints.</span></li>
+          </ol>
+
+          <h3 style="margin-top:1rem">Device Tree wiring</h3>
+          <pre><span class="c">/* imx93.dtsi — base node */</span>
+cm33: <span class="fn">remoteproc-cm33</span> {
+    compatible = <span class="str">"fsl,imx93-cm33"</span>;
+    clocks = &lt;&amp;clk <span class="addr">IMX93_CLK_CM33_GATE</span>&gt;;
+    status = <span class="str">"disabled"</span>;
+};
+
+<span class="c">/* imx93-11x11-frdm.dts — FRDM board enables it */</span>
+&amp;cm33 {
+    mbox-names = <span class="str">"tx"</span>, <span class="str">"rx"</span>, <span class="str">"rxdb"</span>;
+    mboxes = &lt;&amp;mu1 <span class="num">0 1</span>&gt;, &lt;&amp;mu1 <span class="num">1 1</span>&gt;, &lt;&amp;mu1 <span class="num">3 1</span>&gt;;
+    memory-region = &lt;&amp;vdevbuffer&gt;, &lt;&amp;vdev0vring0&gt;, &lt;&amp;vdev0vring1&gt;,
+                    &lt;&amp;vdev1vring0&gt;, &lt;&amp;vdev1vring1&gt;, &lt;&amp;rsc_table&gt;;
+    fsl,startup-delay-ms = &lt;<span class="num">500</span>&gt;;
+    status = <span class="str">"okay"</span>;
+};</pre>
+
+          <h3 style="margin-top:1rem">Firmware files (Yocto → rootfs)</h3>
+          <div class="table-wrap" style="margin-top:.5rem">
+            <table>
+              <thead><tr><th>Recipe</th><th>Installs to</th><th>Use case</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td class="name-col" style="font-size:.78rem">zephyr-demo-imx</td>
+                  <td class="addr-col" style="color:var(--text-muted);font-size:.78rem">/lib/firmware/imx/zephyr/</td>
+                  <td class="desc-col">RPMsg echo / GPIO demo on M33</td>
+                </tr>
+                <tr>
+                  <td class="name-col" style="font-size:.78rem">sof-zephyr</td>
+                  <td class="addr-col" style="color:var(--text-muted);font-size:.78rem">/lib/firmware/imx/sof-zephyr-gcc/</td>
+                  <td class="desc-col">Audio DSP (Sound Open Firmware) running on M33</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="stage-ref" style="margin-top:.75rem">
+            <span class="ref-file">drivers/remoteproc/imx_rproc.c · imx_rproc_start()</span>
+            <span class="ref-file">arch/arm64/boot/dts/freescale/imx93.dtsi:173</span>
+            <span class="ref-file">arch/arm64/boot/dts/freescale/imx93-11x11-frdm.dts:256</span>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /boot-timeline -->
+  </section>
+
+  <!-- ── FULL FLOW ──────────────────────────────────────────── -->
+  <section class="section" id="flow" aria-labelledby="flow-h2">
+    <div class="section-header">
+      <h2 id="flow-h2">Complete Flow</h2>
+      <span class="section-tag">ROM → Linux</span>
+    </div>
+    <pre><span class="c">┌─ ROM (A55 boot) ──────────────────────────────────────────────────┐</span>
+│  M33 held in CPUWAIT by hardware (M33_CFG[2]=1)                   │
+│  ROM boots A55 SPL from eMMC/SD                                   │
+<span class="c">└───────────────────────────────────────────────────────────────────┘</span>
+         │
+         ▼
+<span class="c">┌─ SPL / BL2  ──────────────────────────────────────────────────────┐</span>
+│  <span class="fn">board_init_f()</span>  →  <span class="fn">m33_prepare()</span>                               │
+│    <span class="addr">0x44460010</span>  SCR[0] = 1              release M33 reset          │
+│    <span class="addr">0x444628B4</span>  poll RST_STAT           confirm reset done         │
+│    ELE MU cmd  ele_release_m33_trout()  unlock ELE tamper gate    │
+│    GIC mask    CA55_IRQ_MASK[1][6] = 1  reserve WDOG1 for M33     │
+│    <span class="fn">memset</span>(<span class="addr">0x201E0000</span>, 0, 0x40000)    ECC-init 256 KB TCML        │
+│                                                                   │
+│  M33: reset released, CPUWAIT=1, TCM clean, NOT executing        │
+<span class="c">└───────────────────────────────────────────────────────────────────┘</span>
+         │
+         ▼
+<span class="c">┌─ BL31 / ATF ──────────────────────────────────────────────────────┐</span>
+│  <span class="fn">bl31_platform_setup()</span> installs SMC handler <span class="fn">imx_src_handler()</span>    │
+│                                                                   │
+│  When called (from U-Boot or Linux):                              │
+│    <span class="kw">SMC</span>(<span class="addr">0xC2000005</span>, x1=<span class="num">0x00</span>, boot_addr, 0)                         │
+│    <span class="addr">0x444F005C</span>  INITSVTOR = 0           clear ROM vector override  │
+│    <span class="addr">0x4446009C</span>  GPR9 = boot_addr        set M33 reset vector       │
+│    <span class="addr">0x444F0060</span>  M33_CFG[2] = 0  ◄───── CPUWAIT cleared            │
+│                                         M33 STARTS EXECUTING      │
+<span class="c">└───────────────────────────────────────────────────────────────────┘</span>
+         │
+         ├─ (optional) U-Boot BL33 ─────────────────────────────────
+         │   <span class="fn">bootaux</span> <span class="addr">0x0FFE0000</span>   load ELF from FAT/ext4, SMC kick
+         │   <span class="fn">bootaux_cntr</span>          same but AHAB-authenticated
+         │
+         ▼
+<span class="c">┌─ Linux remoteproc ─────────────────────────────────────────────────┐</span>
+│  driver: <span class="str">fsl,imx93-cm33</span>  · <span class="fn">imx_rproc.c</span>                          │
+│  <span class="fn">request_firmware()</span>  /lib/firmware/imx/zephyr/*.elf              │
+│  parse resource table @ <span class="addr">0x2021E000</span>                                │
+│  copy ELF segments to TCM / DDR                                   │
+│  <span class="kw">SMC</span>(<span class="addr">0xC2000005</span>, <span class="num">0x00</span>, addr)  →  ATF clears CPUWAIT              │
+│  wait 500 ms  →  M33 announces itself                             │
+│  RPMsg virtio via MU1  ·  vrings @ <span class="addr">0xA4000000</span>                   │
+│  userspace: /dev/rpmsg*                                           │
+<span class="c">└───────────────────────────────────────────────────────────────────┘</span></pre>
+  </section>
+
+</div><!-- /page-wrap -->
+
+<script>
+function cycleTheme() {
+  const root = document.documentElement;
+  const cur = root.getAttribute('data-theme') || 'dark';
+  root.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+}
+</script>
