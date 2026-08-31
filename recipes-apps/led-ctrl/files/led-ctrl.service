@@ -1,0 +1,14 @@
+[Unit]
+Description=i.MX93 FRDM RGB LED color daemon
+After=systemd-udevd.service
+Wants=systemd-udevd.service
+
+[Service]
+ExecStart=/usr/bin/led-ctrl
+Restart=on-failure
+RestartSec=2s
+# Remove any stale static-color override on each start
+ExecStartPre=/bin/rm -f /run/led-ctrl.color
+
+[Install]
+WantedBy=multi-user.target

@@ -46,9 +46,11 @@ IMAGE_INSTALL += " \
     openssl \
     \
     strace gdb vim htop \
+    libgpiod libgpiod-tools \
     udev-extraconf \
     \
     hello-imx93 \
+    led-ctrl \
     \
     imx93-m33-firmware \
 "
