@@ -49,6 +49,8 @@ IMAGE_INSTALL += " \
     udev-extraconf \
     \
     hello-imx93 \
+    \
+    imx93-m33-firmware \
 "
 
 export IMAGE_BASENAME = "imx-image-sec-min"
