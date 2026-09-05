@@ -51,6 +51,7 @@ IMAGE_INSTALL += " \
     \
     hello-imx93 \
     led-ctrl \
+    fota-bootloader \
     \
     imx93-m33-firmware \
 "

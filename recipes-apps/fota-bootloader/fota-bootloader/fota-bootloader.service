@@ -1,0 +1,18 @@
+[Unit]
+Description=FOTA host bootloader / OTA monitor
+After=network-online.target dev-ttyS0.device
+Wants=network-online.target
+
+[Service]
+Type=simple
+# "-r" selects Bootloader's non-interactive monitoring mode: it watches the
+# configured GitHub repo for new commits and flashes the target automatically
+# on the next reset. See Bootloader/README.md in this repository.
+ExecStart=@BINDIR@/Bootloader -r
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
