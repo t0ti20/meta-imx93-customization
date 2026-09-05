@@ -82,6 +82,23 @@ WIC_GZ="${DEPLOY_DIR}/${IMAGE_NAME}-${MACHINE}.rootfs.wic.gz"
 ROOTFS_TAR="${DEPLOY_DIR}/${IMAGE_NAME}-${MACHINE}.rootfs.tar.zst"
 KERNEL_IMAGE="${DEPLOY_DIR}/Image-${MACHINE}.bin"
 DTB="${DEPLOY_DIR}/imx93-11x11-frdm-${MACHINE}.dtb"
+# Alternate DTB from NXP kernel patch 0013 (deletes BT on lpuart5, enables
+# lpuart6). Only deployed when meta-imx93-customization's toggle
+# IMX93_UART_HEADER_MODE is "1" (read from imx93-features.inc below), so
+# with the toggle off (mode="0") this script behaves byte-for-byte
+# identically to the pre-toggle setup -- stock Bluetooth stays intact.
+DTB_LPUART="${DEPLOY_DIR}/imx93-11x11-frdm-lpuart-${MACHINE}.dtb"
+
+# Resolve IMX93_UART_HEADER_MODE from the layer's shared .inc so this script
+# uses the same toggle value as the bitbake recipes. Default "0" if the .inc
+# is missing or the variable can't be parsed -- staying on the safe (stock)
+# side, so a broken toggle never silently enables lpuart-mode side effects.
+FEATURES_INC="$(cd "$(dirname "$0")/.." && pwd)/recipes-fsl/images/imx93-features.inc"
+UART_HEADER_MODE="0"
+if [[ -f "$FEATURES_INC" ]]; then
+    UART_HEADER_MODE="$(awk -F= '/^[[:space:]]*IMX93_UART_HEADER_MODE[[:space:]]*=/ { gsub(/[[:space:]"'\'']/, "", $2); print $2; exit }' "$FEATURES_INC")"
+    UART_HEADER_MODE="${UART_HEADER_MODE:-0}"
+fi
 # Machine-wide bootloader container (SPL+ATF+OP-TEE+U-Boot proper), not tied
 # to any particular rootfs image -- same file regardless of sec-min/sec-full.
 IMX_BOOT="${DEPLOY_DIR}/imx-boot"
@@ -148,6 +165,20 @@ deploy_tftp() {
     echo "==> Image, imx93-11x11-frdm.dtb -> $TFTP_DIR/imx93/ (for: run netboot)"
     install -m 0644 "$KERNEL_IMAGE" "$TFTP_DIR/imx93/Image"
     install -m 0644 "$DTB" "$TFTP_DIR/imx93/imx93-11x11-frdm.dtb"
+
+    if [[ "$UART_HEADER_MODE" == "1" ]]; then
+        if [[ -f "$DTB_LPUART" ]]; then
+            echo "==> imx93-11x11-frdm-lpuart.dtb -> $TFTP_DIR/imx93/ (IMX93_UART_HEADER_MODE=1)"
+            install -m 0644 "$DTB_LPUART" "$TFTP_DIR/imx93/imx93-11x11-frdm-lpuart.dtb"
+        else
+            echo "==> WARNING: IMX93_UART_HEADER_MODE=1 but $DTB_LPUART not found -- skipping LPUART DTB (network boot will TFTP-fail)"
+        fi
+    else
+        # Mode=0: also purge any stale lpuart DTB left by a previous mode=1
+        # deploy, so a stray file on the TFTP server can't quietly override
+        # what U-Boot fetches. Idempotent -- rm -f no-ops if not present.
+        rm -f "$TFTP_DIR/imx93/imx93-11x11-frdm-lpuart.dtb"
+    fi
 }
 
 deploy_nfs() {

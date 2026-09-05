@@ -1,0 +1,45 @@
+From 7a1b2c3d4e5f60718293a4b5c6d7e8f900112233 Mon Sep 17 00:00:00 2001
+From: IMX93 Customization <dev@localhost>
+Date: Fri, 05 Sep 2026 12:00:00 +0000
+Subject: [PATCH] imx93_frdm: net_first_bootcmd -- pull DTB name from ${fdtfile}
+
+Applied ONLY when meta-imx93-customization's IMX93_UART_HEADER_MODE = "1".
+Without this patch, net_first_bootcmd TFTPs a hardcoded
+"imx93/imx93-11x11-frdm.dtb" regardless of what CONFIG_DEFAULT_FDT_FILE (or
+the saved U-Boot env) says fdtfile is. The companion cfg fragment in this
+mode flips CONFIG_DEFAULT_FDT_FILE to imx93-11x11-frdm-lpuart.dtb, which
+would then be ignored on the network boot path -- Linux would end up
+running the stock DTB (with Bluetooth still owning LPUART5) even though
+U-Boot's fdtfile default was changed.
+
+Split "netboot_fdt" into a directory prefix + the current fdtfile, so
+the same subdirectory (imx93/) still holds the file but the DTB name
+comes from ${fdtfile}. Mode=0 doesn't apply this patch, so its network
+boot path stays byte-for-byte identical to the pre-toggle behavior.
+---
+ include/configs/imx93_frdm.h | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/include/configs/imx93_frdm.h b/include/configs/imx93_frdm.h
+--- a/include/configs/imx93_frdm.h
++++ b/include/configs/imx93_frdm.h
+@@ -99,7 +99,7 @@
+ 	"netboot_serverip=192.168.1.100\0" \
+ 	"netboot_ethact=eth1\0" \
+ 	"netboot_image=imx93/Image\0" \
+-	"netboot_fdt=imx93/imx93-11x11-frdm.dtb\0" \
++	"netboot_fdt_dir=imx93\0" \
+ 	"netboot_nfsroot=/exports/imx93\0" \
+ 	"netboot_args=setenv bootargs ${jh_clk} ${mcore_clk} console=${console} " \
+ 		"root=/dev/nfs " \
+@@ -118,7 +118,7 @@
+ 		"setenv autoload no; " \
+ 		"setenv netretry no; " \
+ 		"if tftpboot ${loadaddr} ${netboot_image}; then " \
+-			"if tftpboot ${fdt_addr_r} ${netboot_fdt}; then " \
++			"if tftpboot ${fdt_addr_r} ${netboot_fdt_dir}/${fdtfile}; then " \
+ 				"run netboot_args; " \
+ 				"echo ********************************************************; " \
+ 				"echo *  [BOOT SOURCE] NETWORK OK -- kernel+dtb via TFTP        ; " \
+--
+2.34.1

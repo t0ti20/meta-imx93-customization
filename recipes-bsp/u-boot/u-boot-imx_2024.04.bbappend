@@ -13,3 +13,10 @@ SRC_URI += " \
     file://0030-imx93_frdm-Add-network-first-boot-with-static-IP.patch \
     file://0040-imx93_frdm-spl-Add-IMX93-CUSTOM-boot-stage-banner.patch \
 "
+
+# ---- Optional feature: LPUART5/6 header mode on connector P11 ----
+# Single toggle lives in recipes-fsl/images/imx93-features.inc; both the
+# image recipe and this bbappend `require` it so the same value applies
+# during their (independent) parses.
+require recipes-fsl/images/imx93-features.inc
+SRC_URI += "${@' file://imx93_frdm_lpuart_header.cfg file://0035-imx93_frdm-netflash-use-fdtfile-for-lpuart-mode.patch' if d.getVar('IMX93_UART_HEADER_MODE') == '1' else ''}"

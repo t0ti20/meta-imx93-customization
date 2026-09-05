@@ -1,6 +1,11 @@
 # Copyright 2026
 # Released under the MIT license (see COPYING.MIT for the terms)
 
+# Layer feature toggles live in imx93-features.inc (single edit point).
+# It is also `require`d by recipes-bsp/u-boot/u-boot-imx_2024.04.bbappend
+# so the same value applies to the image and the U-Boot build.
+require imx93-features.inc
+
 DESCRIPTION = "Minimal headless security-testing image for i.MX93 FRDM: SSH, Python3, WiFi/Ethernet, AHAB/ELE/OP-TEE/TPM2 tooling. No graphics, no SELinux."
 
 LICENSE = "MIT"
