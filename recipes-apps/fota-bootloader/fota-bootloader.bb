@@ -37,10 +37,25 @@ do_install:append() {
     install -d ${D}${systemd_system_unitdir}
     install -m 0644 ${WORKDIR}/fota-bootloader.service ${D}${systemd_system_unitdir}/fota-bootloader.service
     sed -i "s|@BINDIR@|${bindir}|g" ${D}${systemd_system_unitdir}/fota-bootloader.service
+
+    # Bootloader_Interface.cpp:583 hardcodes File_Location =
+    # "/home/root/FOTA/Application/Build" for CRC calculation, separately from
+    # the /lib/firmware/stm32f103/ watch path. Symlink one to the other so the
+    # binary finds the same firmware in both places without patching the source.
+    install -d ${D}/home/root/FOTA/Application
+    ln -sfn ${nonarch_base_libdir}/firmware/stm32f103 ${D}/home/root/FOTA/Application/Build
 }
+
+FILES:${PN} += "/home/root/FOTA"
 
 SYSTEMD_PACKAGES = "${PN}"
 SYSTEMD_SERVICE:${PN} = "fota-bootloader.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
+
+# Bootloader iterates /lib/firmware/stm32f103/ with std::filesystem and
+# aborts if the directory is missing or empty. stm32f103-firmware ships
+# the .bin into that directory, so pull it in with any fota-bootloader
+# install -- image recipes don't need to list it separately.
+RDEPENDS:${PN} += "stm32f103-firmware"
 
 FILES:${PN} += "${systemd_system_unitdir}/fota-bootloader.service"
