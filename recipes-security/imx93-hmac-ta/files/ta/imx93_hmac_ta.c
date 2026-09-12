@@ -271,14 +271,29 @@ static TEE_Result cmd_append_data(struct hmac_session_ctx *ctx,
 	return TEE_SUCCESS;
 }
 
-/* HMAC_Get_Final: finish the computation and hand back the 32-byte
- * digest. Re-arms the operation with a fresh TEE_MACInit() immediately
- * afterward, so a client can start a NEW message right away without an
- * explicit CLEAR call first (CLEAR stays available for explicitness). */
+/* HMAC_Get_Final: return the HMAC of everything appended SO FAR, as a
+ * non-destructive CHECKPOINT -- the running stream (ctx->mac_op) is left
+ * completely untouched, so the caller can keep calling APPEND_DATA
+ * afterward and it continues the ORIGINAL message exactly where it left
+ * off. Calling GET_FINAL again later returns the HMAC over everything
+ * appended cumulatively (old + new), not just the new part.
+ *
+ * The trick: TEE_MACComputeFinal() is inherently destructive by the GP
+ * spec (finalization folds in the total message length and applies
+ * HMAC's outer hash -- there is no way to "unfinalize" and resume the
+ * exact same state afterward). So instead of finalizing ctx->mac_op
+ * directly, we CLONE its current state into a throwaway operation with
+ * TEE_CopyOperation(), and finalize the CLONE. ctx->mac_op never sees a
+ * ComputeFinal call, so it never leaves its "active, appendable" state.
+ *
+ * If you actually want to discard everything and start over, call
+ * HMAC_Clear explicitly -- that's the only operation that resets
+ * ctx->mac_op itself. */
 static TEE_Result cmd_get_final(struct hmac_session_ctx *ctx,
 				 uint32_t param_types, TEE_Param params[4])
 {
 	TEE_Result res;
+	TEE_OperationHandle snapshot_op = TEE_HANDLE_NULL;
 	uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_OUTPUT,
 					   TEE_PARAM_TYPE_NONE,
 					   TEE_PARAM_TYPE_NONE,
@@ -293,21 +308,34 @@ static TEE_Result cmd_get_final(struct hmac_session_ctx *ctx,
 		return TEE_ERROR_SHORT_BUFFER;
 	}
 
+	/* dstHandle for TEE_CopyOperation just needs to exist with a
+	 * compatible algorithm/mode/key-size -- the copy itself brings over
+	 * the key material AND the in-progress hash state, no separate
+	 * TEE_SetOperationKey() call needed here. */
+	res = TEE_AllocateOperation(&snapshot_op, TEE_ALG_HMAC_SHA256,
+				     TEE_MODE_MAC, HMAC_KEY_BITS);
+	if (res != TEE_SUCCESS) {
+		EMSG("imx93-hmac-ta: snapshot TEE_AllocateOperation failed: 0x%x", res);
+		return res;
+	}
+
+	TEE_CopyOperation(snapshot_op, ctx->mac_op);
+
 	/* Finalize with zero extra input -- everything was already fed in
-	 * via prior APPEND_DATA calls. (TEE_MACComputeFinal also accepts a
-	 * final trailing chunk here; unused, to keep append/final
-	 * unambiguous for callers.) */
-	res = TEE_MACComputeFinal(ctx->mac_op, NULL, 0,
+	 * via prior APPEND_DATA calls. This destroys snapshot_op's state,
+	 * which is exactly why it's a throwaway clone and not ctx->mac_op
+	 * itself. */
+	res = TEE_MACComputeFinal(snapshot_op, NULL, 0,
 				   params[0].memref.buffer,
 				   &params[0].memref.size);
+	TEE_FreeOperation(snapshot_op);
 	if (res != TEE_SUCCESS) {
 		EMSG("imx93-hmac-ta: TEE_MACComputeFinal failed: 0x%x", res);
 		return res;
 	}
 
-	IMSG("imx93-hmac-ta: HMAC finalized (%u bytes)", params[0].memref.size);
-
-	TEE_MACInit(ctx->mac_op, NULL, 0);
+	IMSG("imx93-hmac-ta: HMAC checkpoint computed (%u bytes) -- "
+	     "stream continues, call HMAC_Clear to reset", params[0].memref.size);
 	return TEE_SUCCESS;
 }
 

@@ -33,7 +33,12 @@
  * each produce an IDENTICAL result. params[0] = memref IN (the chunk). */
 #define TA_HMAC_CMD_APPEND_DATA		1
 
-/* Finish the computation and return the 32-byte HMAC-SHA256 digest.
+/* Return the HMAC-SHA256 digest of everything appended SO FAR, as a
+ * non-destructive CHECKPOINT -- the running stream is left untouched, so
+ * you can keep calling APPEND_DATA afterward and it continues the exact
+ * same message. Calling this again later returns the HMAC over
+ * everything appended cumulatively (old + new), not just the new part.
+ * Only CLEAR actually discards the running stream and starts over.
  * params[0] = memref OUT (caller-allocated buffer, >= 32 bytes; the TA
  * writes the actual digest size back into the memref's .size field). */
 #define TA_HMAC_CMD_GET_FINAL		2

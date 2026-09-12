@@ -260,9 +260,16 @@ void action_clear(HmacSession& session)
 }
 
 /* Menu option 4: HMAC_Get_Final on whatever's been appended so far via
- * option 2 (or a previous, not-yet-finalized run) -- useful to inspect
- * the result of manual append_text calls without going through the
- * file-based option 1. */
+ * option 2 (or a previous run) -- useful to inspect the result of manual
+ * append_text calls without going through the file-based option 1.
+ *
+ * This is a non-destructive CHECKPOINT, not a terminator: the TA leaves
+ * the running stream untouched (see cmd_get_final()'s own comment in
+ * imx93_hmac_ta.c for how, via TEE_CopyOperation), so you can keep
+ * picking option 2 afterward to append more data, and a later option 4
+ * will return the HMAC over everything appended cumulatively -- old and
+ * new together. Pick option 3 first if you actually want to discard the
+ * running stream and start a fresh one. */
 void action_get_final(HmacSession& session)
 {
 	std::vector<uint8_t> digest;
@@ -271,6 +278,8 @@ void action_get_final(HmacSession& session)
 
 	rule();
 	std::cout << Yellow << " HMAC-SHA256 : " << Green << to_hex(digest) << Default << "\n";
+	std::cout << Blue << " (stream continues -- option 2 keeps appending; "
+		     "option 3 to reset)\n" << Default;
 	rule();
 }
 
@@ -280,7 +289,7 @@ void print_menu()
 	std::cout << Yellow << "  1. " << Default << "HMAC a file (path prompt).\n";
 	std::cout << Yellow << "  2. " << Default << "Append custom text to the current stream.\n";
 	std::cout << Yellow << "  3. " << Default << "Clear / start a new HMAC stream.\n";
-	std::cout << Yellow << "  4. " << Default << "Get final HMAC now.\n";
+	std::cout << Yellow << "  4. " << Default << "Get final HMAC now (checkpoint -- stream keeps going).\n";
 	std::cout << Yellow << "  9. " << Default << "Exit.\n";
 	std::cout << Blue << "Enter option: " << Yellow;
 }

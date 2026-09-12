@@ -12,7 +12,7 @@ built around, mapped directly onto OP-TEE's own Crypto API:
 |---|---|---|
 | `HMAC_Clear` | `TEE_MACInit()` | Discard anything appended so far, start a fresh message with the same key |
 | `HMAC_Append_Data` | `TEE_MACUpdate()` | Feed in one chunk (callable any number of times, any size) |
-| `HMAC_Get_Final` | `TEE_MACComputeFinal()` | Finish and return the 32-byte digest |
+| `HMAC_Get_Final` | `TEE_CopyOperation()` + `TEE_MACComputeFinal()` | Return the digest of everything appended so far — **non-destructive checkpoint**, the running stream keeps going |
 
 This is a genuinely **streaming** implementation — the CA can HMAC a
 multi-gigabyte file by reading and appending it in 4 KiB chunks, without
@@ -20,6 +20,16 @@ ever holding more than one chunk in memory on either side of the world
 boundary. See `files/ta/imx93_hmac_ta.c` for the fully-commented TA source,
 and this layer's simpler `../imx93-hello-ta/` recipe first if you haven't
 already — this one assumes that context.
+
+**`HMAC_Get_Final` is a checkpoint, not a terminator.** It does *not* end
+the stream: internally the TA clones the running operation's state with
+`TEE_CopyOperation()` and finalizes the *clone* instead of the real one
+(`TEE_MACComputeFinal()` is inherently one-way in the GP spec — there is
+no "unfinalize" — so cloning first is the only way to peek at an
+intermediate result without disturbing the original). This means you can
+call `Get_Final`, keep calling `Append_Data`, and call `Get_Final` again —
+the second result covers everything appended cumulatively, old and new
+together. Only `HMAC_Clear` actually discards the running stream.
 
 For the underlying TrustZone/OP-TEE concepts (worlds, `svc`/`smc`, why
 `IMSG()` logs need a serial cable, the two-`.bbappend` log-level gotcha),
@@ -89,11 +99,10 @@ produce the identical digest.
 
 ### Ship it permanently
 
-Add `imx93-hmac-ta` to `imx-image-sec-min.bb`'s `IMAGE_INSTALL` (same as
-`imx93-hello-ta`), then `bitbake imx-image-sec-min` and deploy as usual —
-see the top-level repo README and `../imx93-hello-ta/README.md` Option B
-for the full flow. Not added by default yet; this recipe currently ships
-standalone-testable only, add it once you're happy with it.
+Already listed in `imx-image-sec-min.bb`'s `IMAGE_INSTALL`, next to
+`imx93-hello-ta`. `bitbake imx-image-sec-min` and deploy as usual — see the
+top-level repo README and `../imx93-hello-ta/README.md` Option B for the
+full flow.
 
 ---
 
@@ -118,7 +127,16 @@ option 2 twice with the two halves, option 4 — compare against option 1 on
 a file containing `hello world` with no trailing newline (`printf 'hello world' > /tmp/t && `
 then pick option 1, path `/tmp/t`). Both must match.
 
-**3. Session isolation** — open two SSH sessions, run `imx93-hmac-ca` in
+**3. Checkpoint (non-destructive `Get_Final`) check** — option 3 (clear),
+option 2 with `"foo"`, option 4 (note the digest), option 2 with `"bar"`
+(no clear in between), option 4 again. The second digest must equal
+HMAC of `"foobar"` computed in one shot (option 1 on a file containing
+exactly `foobar`) — **not** HMAC of `"bar"` alone. If it matches `"bar"`
+alone instead, `TEE_CopyOperation()` isn't actually preserving state
+correctly on this OP-TEE build — worth reporting upstream, this is
+supposed to be a portable GP API guarantee.
+
+**4. Session isolation** — open two SSH sessions, run `imx93-hmac-ca` in
 both, start appending different data in each without finalizing. Each
 should only ever see its own data in its own `Get_Final` result — this is
 `struct hmac_session_ctx` in the TA doing its job (verified by code
